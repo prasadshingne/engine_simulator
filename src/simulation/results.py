@@ -18,18 +18,34 @@ class SimulationResults:
     species_names: List[str]   # Species names
     
     @classmethod
-    def from_solver_output(cls, output: Dict, species_names: List[str]):
+    def from_solver_output(cls, output: Dict, species_names: List[str], model_type: str = "single"):
         """Create results from solver output."""
-        return cls(
-            time=output['t'],
-            crank_angle=output['ca'],
-            temperature=output['y'][0],
-            pressure=output['y'][2],
-            volume=output['y'][1],
-            mass=output['y'][3],
-            species=output['y'][4:],
-            species_names=species_names
-        )
+        if model_type == "single":
+            # Single zone model: [T, V, P, m, Y...]
+            return cls(
+                time=output['t'],
+                crank_angle=output['ca'],
+                temperature=output['y'][0],
+                pressure=output['y'][2],
+                volume=output['y'][1],
+                mass=output['y'][3],
+                species=output['y'][4:],
+                species_names=species_names
+            )
+        else:
+            # Multi-zone model: [T, P, V, m, T_i, Y_i..., Y_bulk]
+            nsp = len(species_names)
+            nzones = (output['y'].shape[0] - 4 - nsp) // (nsp + 1)
+            return cls(
+                time=output['t'],
+                crank_angle=output['ca'],
+                temperature=output['y'][0],
+                pressure=output['y'][1],
+                volume=output['y'][2],
+                mass=output['y'][3],
+                species=output['y'][4 + nzones*(nsp+1):],  # Use bulk composition
+                species_names=species_names
+            )
     
     def plot_pressure_volume(self, save_path: str = None, dpi: int = 300):
         """Plot P-V diagram."""

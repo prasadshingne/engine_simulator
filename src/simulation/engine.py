@@ -45,6 +45,8 @@ class EngineConfig:
     max_step: float    # Maximum step size
     first_step: float  # First step size
     adiabatic: bool    # Whether to run in adiabatic mode
+    model_type: str    # Model type (single or multi)
+    nzones: int        # Number of zones for multi-zone model
     
     # Output settings
     save_path: str     # Path to save results
@@ -89,6 +91,8 @@ class EngineConfig:
             max_step=float(config['solver']['max_step']),
             first_step=float(config['solver']['first_step']),
             adiabatic=bool(config['solver']['adiabatic']),
+            model_type=str(config['solver']['model_type']),
+            nzones=int(config['solver']['nzones']),
             
             # Output settings
             save_path=str(config['output']['save_path']),
@@ -145,7 +149,9 @@ class EngineSimulation:
                 atol=config.atol,
                 max_step=config.max_step,
                 first_step=config.first_step,
-                adiabatic=config.adiabatic
+                adiabatic=config.adiabatic,
+                model_type=config.model_type,
+                nzones=config.nzones
             )
         )
         
@@ -166,13 +172,34 @@ class EngineSimulation:
         m0 = self.config.pressure * V0 / (
             props['cv'] * self.config.temperature * (props['gamma'] - 1.0))  # PV = mRT where R = cv*(gamma-1)
         
-        # Combine initial state
-        y0 = np.zeros(4 + len(Y0))
-        y0[0] = self.config.temperature
-        y0[1] = V0
-        y0[2] = self.config.pressure
-        y0[3] = m0
-        y0[4:] = Y0
+        if self.config.model_type == "single":
+            # Single zone model
+            y0 = np.zeros(4 + len(Y0))
+            y0[0] = self.config.temperature
+            y0[1] = V0
+            y0[2] = self.config.pressure
+            y0[3] = m0
+            y0[4:] = Y0
+        else:
+            # Multi-zone model
+            nzones = min(max(1, self.config.nzones), 20)  # Limit between 1 and 20 zones
+            nsp = len(Y0)
+            y0 = np.zeros(4 + nzones*(nsp+1) + nsp)  # [T,P,V,m] + [T_i,Y_i for each zone] + [Y_bulk]
+            y0[0] = self.config.temperature  # Bulk T
+            y0[1] = self.config.pressure    # Bulk P
+            y0[2] = V0                      # Volume
+            y0[3] = m0                      # Total mass
+            
+            # Initialize zone temperatures and compositions
+            for i in range(nzones):
+                # Zone temperature (linear distribution with ±2% variation)
+                T_zone = self.config.temperature * (1.0 + 0.02*(i - nzones/2)/nzones)
+                y0[4 + i*(nsp+1)] = T_zone
+                # Zone composition (same as bulk initially)
+                y0[4 + i*(nsp+1) + 1:4 + (i+1)*(nsp+1)] = Y0
+            
+            # Bulk composition
+            y0[4 + nzones*(nsp+1):] = Y0
         
         return y0
     
@@ -200,7 +227,8 @@ class EngineSimulation:
         # Process results
         results = SimulationResults.from_solver_output(
             solution,
-            self.chemistry.gas.species_names
+            self.chemistry.gas.species_names,
+            model_type=self.config.model_type
         )
         
         return results

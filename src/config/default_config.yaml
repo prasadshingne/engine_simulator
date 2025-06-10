@@ -26,11 +26,13 @@ initial_conditions:
     
 solver:
   method: "LSODA"       # solver method
-  rtol: 1.0e-4          # relative tolerance
-  atol: 1.0e-6          # absolute tolerance
-  max_step: 1.0e-3      # maximum step size
-  first_step: 1.0e-6    # initial step size
+  rtol: 1.0e-5          # relative tolerance (tightened for chemistry)
+  atol: 1.0e-8          # absolute tolerance (tightened for chemistry)
+  max_step: 1.0e-4      # maximum step size (reduced for stability)
+  first_step: 1.0e-6    # initial step size (reduced for stability)
   adiabatic: false       # whether to run in adiabatic mode (no heat transfer)
+  model_type: "single"   # "single" or "multi" zone model
+  nzones: 5             # number of zones (1-20) for multi-zone model
   
 output:
   save_path: "data/output/"  # Path relative to project root
