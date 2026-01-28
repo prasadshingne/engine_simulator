@@ -134,12 +134,42 @@ Run the 10-zone non-adiabatic simulation:
 python scripts/test_cvode_multizone.py
 ```
 
+#### How Temperature Stratification Develops
+
+The multizone model divides the cylinder into concentric zones, from the hot core to the cooler wall-adjacent region. Each zone experiences different heat loss rates based on its surface area fraction exposed to the cylinder wall.
+
+![Multizone Heat Transfer Model](data/output/multizone_heat_transfer_model.png)
+
+The surface area fraction for each zone is calculated as:
+
+```
+Ai = 3(2(i-1))² / [2 × Nzones × (Nzones-1) × (2×Nzones-1)]
+```
+
+where:
+- Zone 1 (core): Ai = 0 — no direct wall contact, stays hottest
+- Zone N (wall): Maximum Ai — highest heat loss, coolest temperature
+
+This creates a thermal boundary layer effect:
+- **Core zones** retain heat from compression and combustion
+- **Wall-adjacent zones** lose heat to the cylinder wall
+- **Temperature spread** of ~1000-1200 K develops during combustion
+- **Combustion phasing** differs between zones due to temperature-dependent kinetics
+
 ## Model Formulation
 
 ### Key Assumptions
-- Uniform temperature across the cylinder (single-zone model)
-- Uniform composition and instantaneous mixing (perfect mixing)
+
+**Single-zone model:**
+- Uniform temperature and composition across the cylinder
 - Uniform heat transfer across cylinder walls
+
+**Multizone model:**
+- Concentric zones with individual temperatures and compositions
+- Shared pressure across all zones (pressure equilibration)
+- Zone-specific heat transfer based on wall surface area fraction
+
+**Common assumptions:**
 - Ideal gas behavior
 - No crevice effects
 - No blow-by losses
