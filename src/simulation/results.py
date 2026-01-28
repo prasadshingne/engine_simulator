@@ -18,7 +18,7 @@ class SimulationResults:
     species_names: List[str]   # Species names
     
     @classmethod
-    def from_solver_output(cls, output: Dict, species_names: List[str], model_type: str = "single"):
+    def from_solver_output(cls, output: Dict, species_names: List[str], model_type: str = "single", mechanism: str = None):
         """Create results from solver output."""
         if model_type == "single":
             # Single zone model: [T, V, P, m, Y...]
@@ -33,17 +33,37 @@ class SimulationResults:
                 species_names=species_names
             )
         else:
-            # Multi-zone model: [T, P, V, m, T_i, Y_i..., Y_bulk]
+            # Multi-zone model: [T, P, V, T_i, Y_i..., Y_bulk]
+            # Note: M is NOT in state vector (constant for closed cycle)
             nsp = len(species_names)
-            nzones = (output['y'].shape[0] - 4 - nsp) // (nsp + 1)
+            nzones = (output['y'].shape[0] - 3 - nsp) // (nsp + 1)  # Changed from -4 to -3
+
+            # Extract state variables
+            T_bulk = output['y'][0]
+            P_bulk = output['y'][1]
+            V = output['y'][2]
+            Ybulk = output['y'][3 + nzones*(nsp+1):]  # Changed from [4+...] to [3+...]
+
+            # Compute mass from initial state
+            # Since mass is constant for closed cycle, compute it from the first timestep
+            import cantera as ct
+            if mechanism is None:
+                mechanism = 'data/mechanisms/Nissan_chem.yaml'  # Fallback
+            gas = ct.Solution(mechanism)
+            gas.TPY = T_bulk[0], P_bulk[0], Ybulk[:,0]
+            M_constant = V[0] * gas.density
+
+            # Create mass array (constant for all timesteps)
+            mass = np.full_like(V, M_constant)
+
             return cls(
                 time=output['t'],
                 crank_angle=output['ca'],
-                temperature=output['y'][0],
-                pressure=output['y'][1],
-                volume=output['y'][2],
-                mass=output['y'][3],
-                species=output['y'][4 + nzones*(nsp+1):],  # Use bulk composition
+                temperature=T_bulk,
+                pressure=P_bulk,
+                volume=V,
+                mass=mass,
+                species=Ybulk,  # Use bulk composition
                 species_names=species_names
             )
     

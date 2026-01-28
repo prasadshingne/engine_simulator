@@ -5,10 +5,13 @@ A zero-dimensional (0D) engine simulator for modeling closed-cycle operation wit
 ## Features
 
 - Closed-cycle engine simulation (IVC to EVO)
+- **Single-zone and multi-zone models** (up to 10+ zones)
 - Detailed chemical kinetics using Cantera
 - Woschni heat transfer model
 - EGR handling with equilibrium composition
+- **Temperature stratification modeling** (multizone with heat transfer)
 - Interactive plotting of results
+- **CVODE solver support** (SUNDIALS) for robust handling of stiff chemistry
 
 ## Project Structure
 
@@ -30,21 +33,28 @@ A zero-dimensional (0D) engine simulator for modeling closed-cycle operation wit
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.9+
 - Cantera 2.6+
 - NumPy
 - SciPy
 - Matplotlib
 - PyYAML
+- tqdm
+- **scikits.odes** (optional, recommended for multizone non-adiabatic simulations)
 
 ## Quick Start
 
 1. Install dependencies:
 ```bash
-pip install cantera numpy scipy matplotlib pyyaml
+pip install cantera numpy scipy matplotlib pyyaml tqdm
 ```
 
-2. Run simulation:
+2. (Optional) For multizone non-adiabatic simulations, install CVODE solver:
+```bash
+conda install -c conda-forge scikits.odes sundials
+```
+
+3. Run simulation:
 ```bash
 python scripts/run_simulation.py
 ```
@@ -106,6 +116,22 @@ The comparison shows:
 You can run this comparison using:
 ```bash
 python scripts/compare_adiabatic.py
+```
+
+### Multizone Temperature Stratification
+
+The multizone model captures temperature stratification effects from wall heat transfer. Each zone evolves independently with its own temperature and composition, while sharing a common pressure.
+
+![Multizone Stratification](data/output/10zone_cvode_stratification.png)
+
+The multizone results show:
+- Temperature stratification between core and wall zones (~1200 K spread at peak)
+- Zone-by-zone combustion phasing differences
+- More realistic heat transfer modeling with thermal boundary layers
+
+Run the 10-zone non-adiabatic simulation:
+```bash
+python scripts/test_cvode_multizone.py
 ```
 
 ## Model Formulation
@@ -183,12 +209,15 @@ The model solves the following conservation equations for a reacting variable vo
 ### Numerical Solution
 
 The equations are solved using:
-- Variable time step LSODA solver
+- Variable time step solvers (LSODA or CVODE)
 - Adaptive error control (rtol=1e-4, atol=1e-6)
 - Crank angle as independent variable
-- State vector: y = [T, V, P, m, Y₁...Y₃₃]
+- Single-zone state vector: y = [T, V, P, m, Y₁...Y₃₃]
+- Multizone state vector: y = [T, P, V, T₁, Y₁...Y₃₃, ..., Tₙ, Y₁...Y₃₃, Y_bulk₁...Y_bulk₃₃]
 - Chemical source terms from Cantera
 - Thermodynamic properties from NASA polynomials
+
+For extremely stiff multizone systems with heat transfer, the CVODE solver (SUNDIALS) provides superior stability compared to scipy's LSODA.
 
 ### Heat Transfer Model
 
@@ -234,10 +263,11 @@ Current simulation capabilities include:
 
 The simulation uses:
 - Python with Cantera for chemical kinetics
-- LSODA solver for stiff ODE integration
+- LSODA solver for single-zone and adiabatic multizone simulations
+- CVODE solver (SUNDIALS) for non-adiabatic multizone simulations
 - Adaptive time stepping with:
-  - Relative tolerance: 1e-4
-  - Absolute tolerance: 1e-6
+  - Relative tolerance: 1e-4 to 1e-5
+  - Absolute tolerance: 1e-6 to 1e-12
   - Maximum step size: 1e-3 s
   - Initial step size: 1e-6 s
 
@@ -250,6 +280,8 @@ The simulator can predict:
 4. Wall heat transfer
 5. P-V diagram
 6. Mass evolution
+7. Temperature stratification (multizone model)
+8. Zone-by-zone combustion phasing (multizone model)
 
 ## Output Visualization
 
@@ -263,19 +295,19 @@ The code generates several plots:
 ## Limitations
 
 Current limitations include:
-1. Single-zone assumption (no temperature stratification)
-2. No direct fuel injection modeling
-3. Limited to closed cycle (IVC to EVO)
-4. No turbulence modeling
-5. Simplified wall heat transfer
+1. No direct fuel injection modeling
+2. Limited to closed cycle (IVC to EVO)
+3. No turbulence modeling
+4. Simplified wall heat transfer (Woschni correlation)
+5. No inter-zone mass transfer in multizone model
 
 ## Future Work
 
 Planned improvements:
-1. Multi-zone modeling
-2. Direct injection capabilities
-3. Full cycle simulation
-4. Turbulence effects
-5. More detailed heat transfer models
-6. Crevice flow modeling
-7. Blow-by losses
+1. Direct injection capabilities
+2. Full cycle simulation
+3. Turbulence effects
+4. More detailed heat transfer models
+5. Crevice flow modeling
+6. Blow-by losses
+7. Inter-zone mass transfer for multizone model

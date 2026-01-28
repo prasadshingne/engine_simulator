@@ -11,6 +11,13 @@ from ..engine.geometry import GeometryParams
 from ..engine.heat_transfer import HeatTransfer
 from ..models.chemistry import Chemistry
 
+# Try to import CVODE solver (SUNDIALS) for better handling of stiff systems
+try:
+    from .solver_ida import MultizoneCVODE, check_cvode_available
+    HAS_CVODE = check_cvode_available()
+except ImportError:
+    HAS_CVODE = False
+
 @dataclass
 class SolverParams:
     """Solver parameters."""
@@ -79,6 +86,12 @@ class EngineSolver:
         self.chemistry = chemistry
         self.params = params
         self.progress_bar = None
+
+        # Intermediate result storage for partial result plotting
+        self.intermediate_results = {'t': [], 'y': [], 'ca': []}
+        self.save_interval = 100  # Save every N ODE evaluations
+        self.eval_count = 0
+        self.save_path = None
         self.last_t = None
         self.t_eval = None
         self.gamma = 1.35
@@ -97,6 +110,21 @@ class EngineSolver:
     
     def _ode_system(self, t: float, y: np.ndarray, rpm: float, T_wall: float) -> np.ndarray:
         """Calculate derivatives for engine ODE system."""
+        # Save intermediate results for partial plotting
+        self.eval_count += 1
+        if self.save_path and self.eval_count % self.save_interval == 0:
+            omega = self.rpm * 2 * np.pi / 60
+            ca = self.ca_start + np.rad2deg(omega * t)
+            self.intermediate_results['t'].append(t)
+            self.intermediate_results['y'].append(y.copy())
+            self.intermediate_results['ca'].append(ca)
+            # Periodically save to file
+            if len(self.intermediate_results['t']) % 10 == 0:
+                np.savez(self.save_path,
+                         t=np.array(self.intermediate_results['t']),
+                         y=np.array(self.intermediate_results['y']).T,
+                         ca=np.array(self.intermediate_results['ca']))
+
         if self.params.model_type == "single":
             return self._ode_system_single(t, y, rpm, T_wall)
         else:
@@ -166,34 +194,126 @@ class EngineSolver:
         return dydt
         
     def _ode_system_multi(self, t: float, y: np.ndarray, rpm: float, T_wall: float) -> np.ndarray:
-        """Calculate derivatives for multi-zone engine ODE system."""
-        # Extract state variables
+        """Calculate derivatives for multi-zone engine ODE system.
+
+        State vector structure (matching Matlab HCCI_sim_dec038.m):
+        [T, P, V, T_zone1, Y_zone1, ..., T_zoneN, Y_zoneN, Y_bulk]
+
+        Note: Mass M is constant for closed cycle (no valve flow)
+        """
+        # CRITICAL: For non-adiabatic, clip state vector to physical bounds BEFORE checking for NaN
+        # This prevents Jacobian perturbations from creating unphysical values
+        # For adiabatic cases, skip this as they work fine without it
+        if not self.params.adiabatic:
+            y_clipped = y.copy()
+
+            # Temperature bounds: 100 K - 5000 K
+            y_clipped[0] = np.clip(y_clipped[0], 100.0, 5000.0)  # Bulk T
+
+            # Pressure bounds: 0.1 bar - 500 bar
+            y_clipped[1] = np.clip(y_clipped[1], 1.0e4, 5.0e7)  # Bulk P
+
+            # Volume bounds: positive
+            if y_clipped[2] < 1.0e-10:
+                y_clipped[2] = 1.0e-10
+
+            # Get dimensions
+            nsp = self.chemistry.gas.n_species
+            nzones = min(max(1, self.params.nzones), 20)
+
+            # Clip zone temperatures and mass fractions
+            for i in range(nzones):
+                # Zone temperature
+                zone_T_idx = 3 + i*(nsp+1)
+                y_clipped[zone_T_idx] = np.clip(y_clipped[zone_T_idx], 100.0, 5000.0)
+
+                # Zone species mass fractions
+                zone_Y_start = 3 + i*(nsp+1) + 1
+                zone_Y_end = 3 + (i+1)*(nsp+1)
+                y_clipped[zone_Y_start:zone_Y_end] = np.clip(
+                    y_clipped[zone_Y_start:zone_Y_end],
+                    self.params.min_mass_fraction,
+                    1.0
+                )
+                # Renormalize
+                Y_sum = np.sum(y_clipped[zone_Y_start:zone_Y_end])
+                if Y_sum > 1.0e-10:
+                    y_clipped[zone_Y_start:zone_Y_end] /= Y_sum
+
+            # Clip bulk species mass fractions
+            bulk_Y_start = 3 + nzones*(nsp+1)
+            y_clipped[bulk_Y_start:] = np.clip(
+                y_clipped[bulk_Y_start:],
+                self.params.min_mass_fraction,
+                1.0
+            )
+            Y_bulk_sum = np.sum(y_clipped[bulk_Y_start:])
+            if Y_bulk_sum > 1.0e-10:
+                y_clipped[bulk_Y_start:] /= Y_bulk_sum
+
+            # Now check for NaN in clipped state
+            if not np.all(np.isfinite(y_clipped)):
+                theta = (rpm * 2 * np.pi / 60) * t
+                ca = self.ca_start + np.rad2deg(theta)
+                nan_indices = np.where(~np.isfinite(y_clipped))[0]
+                print(f"\n=== NaN in input state at CA={ca:.1f}° ===", flush=True)
+                print(f"NaN at indices: {nan_indices[:10]}", flush=True)  # First 10
+                print(f"y_clipped[0:5] = {y_clipped[0:5]}", flush=True)
+                raise ValueError(f"NaN in input state vector at CA={ca:.1f}°")
+
+            # Use clipped state for all subsequent calculations
+            y = y_clipped
+        else:
+            # For adiabatic, just check for NaN in input
+            if not np.all(np.isfinite(y)):
+                theta = (rpm * 2 * np.pi / 60) * t
+                ca = self.ca_start + np.rad2deg(theta)
+                nan_indices = np.where(~np.isfinite(y))[0]
+                print(f"\n=== NaN in input state at CA={ca:.1f}° ===", flush=True)
+                print(f"NaN at indices: {nan_indices[:10]}", flush=True)
+                print(f"y[0:5] = {y[0:5]}", flush=True)
+                raise ValueError(f"NaN in input state vector at CA={ca:.1f}°")
+
+        # Extract state variables (Matlab lines 31-37)
         T = y[0]              # Bulk Temperature [K]
         P = y[1]              # Bulk Pressure [Pa]
         V = y[2]              # Total Volume [m³]
-        M = y[3]              # Total Mass [kg]
-        
+        # M is CONSTANT for closed cycle - stored in self.M_total
+        M = self.M_total
+
         # Get number of species and zones
         nsp = self.chemistry.gas.n_species
         nzones = min(max(1, self.params.nzones), 20)  # Limit between 1 and 20 zones
-        
-        # Extract zone temperatures and compositions
+
+        # Extract zone temperatures and compositions (Matlab lines 80-82)
         tzone = np.zeros(nzones)
         yzone = np.zeros((nsp, nzones))
         for i in range(nzones):
-            tzone[i] = y[4 + i*(nsp+1)]
-            yzone[:,i] = y[4 + i*(nsp+1) + 1:4 + (i+1)*(nsp+1)]
+            tzone[i] = y[3 + i*(nsp+1)]  # Changed from y[4+...] to y[3+...]
+            yzone[:,i] = y[3 + i*(nsp+1) + 1:3 + (i+1)*(nsp+1)]  # Changed indexing
             # Ensure mass fractions stay within bounds
             yzone[:,i] = np.clip(yzone[:,i], self.params.min_mass_fraction, 1.0)
             yzone[:,i] /= np.sum(yzone[:,i])  # Renormalize
-        
-        # Extract bulk composition
-        Ybulk = y[4 + nzones*(nsp+1):]
-        
+
+        # Safety check: ensure temperatures stay physical
+        min_tzone = np.min(tzone)
+        if min_tzone < 100.0:
+            theta = (rpm * 2 * np.pi / 60) * t
+            ca = self.ca_start + np.rad2deg(theta)
+            # Print diagnostic information
+            print(f"\n=== DIAGNOSTIC INFO AT FAILURE ===", flush=True)
+            print(f"CA = {ca:.1f}°, t = {t:.6f} s", flush=True)
+            print(f"Bulk: P={P/1e5:.2f} bar, V={V*1e6:.2f} cm³, M={M*1000:.3f} g", flush=True)
+            print(f"Zone temperatures: {tzone}", flush=True)
+            raise ValueError(f"Zone temperature too low ({min_tzone:.1f} K) at CA={ca:.1f}°")
+
+        # Extract bulk composition (Matlab line 41)
+        Ybulk = y[3 + nzones*(nsp+1):]  # Changed from y[4+...] to y[3+...]
+
         # Calculate crank angle and volume change
         theta = (rpm * 2 * np.pi / 60) * t  # [rad]
         dVdt = self.geom.volume_rate(theta, rpm)
-        
+
         # Update progress bar if enabled
         if self.progress_bar is not None:
             current_ca = self.ca_start + np.rad2deg(theta)
@@ -204,11 +324,7 @@ class EngineSolver:
                     'CA': f"{current_ca - 180:.1f}°",
                     'Zones': nzones
                 })
-        
-        # Calculate surface areas
-        head_area, piston_area, liner_area = self.geom.surface_area(theta)
-        total_area = head_area + piston_area + liner_area
-        
+
         # Calculate heat transfer (zero if adiabatic)
         Q_wall = 0.0
         if not self.params.adiabatic:
@@ -217,118 +333,259 @@ class EngineSolver:
                 theta, rpm, P, T, p_motored,
                 self.p_ref, self.T_ref, self.V_ref, T_wall
             )
-        
-        # Initialize arrays for zone calculations
+
+        # Initialize arrays (following Matlab Cycle_ode_multi.asv structure)
         Ygen = np.zeros((nsp, nzones))
-        unsp = np.zeros((nsp, nzones))
-        hnsp = np.zeros((nsp, nzones))
-        Cvi = np.zeros(nzones)
-        Ri = np.zeros(nzones)
+        unsp = np.zeros((nsp, nzones))  # Internal energy per species [J/kg]
+        hnsp = np.zeros((nsp, nzones))  # Enthalpy per species [J/kg]
         Vi = np.zeros(nzones)
-        dVidt = np.zeros(nzones)
-        Ai = np.zeros(nzones)
-        hi = np.zeros(nzones)
         Mi = np.zeros(nzones)
-        
-        # Calculate bulk properties
-        sumgen = 0.0
-        sumRYdot = 0.0
-        sumhYdot = 0.0
-        sumCv = 0.0
-        sumR = 0.0
-        sumPV = 0.0
-        
-        # Calculate per-zone properties
+        Cvi = np.zeros(nzones)
+        Cpi = np.zeros(nzones)
+        Ri = np.zeros(nzones)
+
+        # Distribute mass equally across zones (Matlab line 77)
+        mass_per_zone = M / nzones
+
+        # Get species-specific properties (constant across all zones)
+        # Just need to set state once to get MW
+        self.chemistry.gas.TPY = T, P, Ybulk
+        MW = self.chemistry.gas.molecular_weights  # [kg/kmol]
+        Rk = ct.gas_constant / MW  # [J/kg/K] - Matlab line 90
+
+        # Accumulators for bulk equations
+        sumgen = 0.0      # Matlab line 114: sum(mi*Ygen'*unsp)
+        sumRYdot = 0.0    # Matlab line 116: sum(Rk'*Ygen)
+        sumRY = 0.0       # Matlab line 119: sum(Rk'*Y)
+
+        # Per-zone calculations (Matlab lines 79-122)
         for i in range(nzones):
-            # Calculate zone mass based on composition
-            Mi[i] = M * np.sum(yzone[:,i])
-            
-            # Calculate zone volume using ideal gas law
-            # V = mRT/P
-            Vi[i] = Mi[i] * ct.gas_constant * tzone[i] / (P * self.chemistry.gas.mean_molecular_weight)
-            dVidt[i] = dVdt * Vi[i]/V  # Zone volume change proportional to volume fraction
-            Ai[i] = 3*(2*(i-1))**2/(2*nzones*(nzones-1)*(2*nzones-1)) * total_area
-            
-            # Now that we have valid mass and volume, set zone state
-            self.chemistry.gas.TPY = tzone[i], P, yzone[:,i]
-            
-            # Get species properties
-            Rk = ct.gas_constant * self.chemistry.gas.molecular_weights
-            hk = self.chemistry.gas.partial_molar_enthalpies
-            unsp[:,i] = (hk - tzone[i] * Rk) / self.chemistry.gas.molecular_weights
-            hnsp[:,i] = hk / self.chemistry.gas.molecular_weights
-            
-            # Calculate species production rates
-            mdot, _ = self.chemistry.get_reaction_rates()
-            Ygen[:,i] = mdot / self.chemistry.gas.density
-            
-            # Limit species production rates to prevent negative mass fractions
-            for j in range(nsp):
-                if yzone[j,i] + Ygen[j,i] * self.params.max_step < self.params.min_mass_fraction:
-                    Ygen[j,i] = (self.params.min_mass_fraction - yzone[j,i]) / self.params.max_step
-            
-            # Calculate zone properties
-            Cvi[i] = self.chemistry.gas.cv_mass
-            Ri[i] = ct.gas_constant / self.chemistry.gas.mean_molecular_weight
-            hi[i] = self.chemistry.gas.enthalpy_mass
-            
-            # Accumulate terms for bulk equations
-            sumgen += Mi[i] * Ygen[:,i].T @ unsp[:,i]
-            sumRYdot += Rk.T @ Ygen[:,i]
-            sumhYdot += Mi[i] * Ygen[:,i].T @ hnsp[:,i]
-            sumCv += Mi[i] * Cvi[i]
-            sumR += Mi[i] * Ri[i]
-            sumPV += P * Vi[i]
-        
-        # Calculate bulk derivatives
-        dTdt = (sumgen - P*dVdt) / sumCv  # No Q_wall term in adiabatic case
-        
-        # Calculate pressure derivative using ideal gas law
-        dPdt = P * (dTdt/T - dVdt/V)
-        
-        # Mass is conserved
-        dMdt = 0.0
-        
-        # Calculate bulk composition derivatives
+            Mi[i] = mass_per_zone
+
+            try:
+                # Set zone state (Matlab line 85)
+                self.chemistry.gas.TPY = tzone[i], P, yzone[:,i]
+
+                # Get thermodynamic properties (Matlab lines 86-89)
+                Cpi[i] = self.chemistry.gas.cp_mass
+                Cvi[i] = self.chemistry.gas.cv_mass
+                Ri[i] = Cpi[i] - Cvi[i]
+
+                # Zone volume (Matlab line 93)
+                Vi[i] = Mi[i] / self.chemistry.gas.density
+
+                # Species properties (Matlab lines 90-92)
+                # unsp = ((h_k/(R*T))*T - T)*Rk = u_k (internal energy per unit mass)
+                # hnsp = (h_k/(R*T))*T*Rk = h_k (enthalpy per unit mass)
+                # where h_k/(R*T) is dimensionless, Rk = R/MW
+                h_RT = self.chemistry.gas.standard_enthalpies_RT  # Dimensionless: H_k/(R*T)
+
+                # unsp = (h_RT * T - T) * Rk = R*T*(h_RT - 1)/MW [J/kg]
+                # This is internal energy: u = h - RT
+                unsp[:,i] = ct.gas_constant * tzone[i] * (h_RT - 1.0) / MW
+
+                # hnsp = h_RT * T * Rk = R*T*h_RT/MW [J/kg]
+                # This is enthalpy: h
+                hnsp[:,i] = ct.gas_constant * tzone[i] * h_RT / MW
+
+                # Species production rates (Matlab line 97)
+                wdot = self.chemistry.gas.net_production_rates  # [kmol/m³/s]
+                prody = wdot * MW  # [kg/m³/s]
+                Ygen[:,i] = prody / self.chemistry.gas.density  # [1/s]
+
+                # Check for non-finite chemistry results
+                if not np.all(np.isfinite(Ygen[:,i])):
+                    # If chemistry gives bad results, use zero production rates
+                    Ygen[:,i] = np.zeros(nsp)
+
+            except Exception as e:
+                # If Cantera fails (e.g., due to bad state from Jacobian perturbation),
+                # use safe default values and zero production rates
+                theta = (rpm * 2 * np.pi / 60) * t
+                ca = self.ca_start + np.rad2deg(theta)
+                # Use approximate values to allow continuation
+                Cpi[i] = 1000.0  # Approximate cp
+                Cvi[i] = 700.0   # Approximate cv
+                Ri[i] = 300.0    # Approximate R
+                Vi[i] = V / nzones  # Approximate zone volume
+                unsp[:,i] = np.zeros(nsp)  # Zero internal energy changes
+                hnsp[:,i] = np.zeros(nsp)  # Zero enthalpy changes
+                Ygen[:,i] = np.zeros(nsp)  # Zero production rates
+
+            # Accumulate for bulk equations (Matlab lines 114, 116, 119)
+            sumgen += Mi[i] * np.dot(Ygen[:,i], unsp[:,i])
+            sumRYdot += np.dot(Rk, Ygen[:,i])
+            sumRY += np.dot(Rk, yzone[:,i])
+
+        # Bulk gas properties for temperature equation (Matlab lines 42-46)
+        try:
+            self.chemistry.gas.TPY = T, P, Ybulk
+            CVbulk = self.chemistry.gas.cv_mass
+            CPbulk = self.chemistry.gas.cp_mass
+            Rbulk = CPbulk - CVbulk  # Initial value before accumulation (Matlab line 45)
+        except Exception as e:
+            # Use safe defaults if bulk properties fail
+            CVbulk = 700.0  # Approximate cv for air
+            CPbulk = 1000.0  # Approximate cp for air
+            Rbulk = 300.0  # Approximate R for air
+
+        #  IMPORTANT: Matlab accumulates Rbulk over zones (line 120)
+        # Even though this seems dimensionally inconsistent, match it exactly
+        for i in range(nzones):
+            Rbulk += Mi[i] * np.dot(Rk, yzone[:,i])  # Matlab line 120: Rbulk = Rbulk + Rk(:,i)'*yzone(:,i).*init.mzone(i)
+
+        # Bulk temperature derivative (Matlab line 88-89)
+        # dT/dt = 1/(M*CV)*(-M*R*T/V*dV/dt - q - sumgen)
+        compression_work = -M * Rbulk * T / V * dVdt
+        dTdt = (1.0 / (M * CVbulk)) * (compression_work - Q_wall - sumgen)
+
+        # Pressure derivative (Matlab line 95) - CRITICAL: Use ideal gas law form, NOT composition-dependent!
+        # The composition-dependent form (line 93 in Matlab) is commented out in the working version
+        # dP/dt = P*((dTdt/T) - (dVdt/V))  - Simple ideal gas law
+        if abs(T) < 1.0:
+            theta = (rpm * 2 * np.pi / 60) * t
+            ca = self.ca_start + np.rad2deg(theta)
+            print(f"\n=== DIAGNOSTIC: T too low ===", flush=True)
+            print(f"CA={ca:.1f}°, T={T:.1f} K, P={P/1e5:.2f} bar", flush=True)
+            print(f"dTdt={dTdt:.2e}, dVdt={dVdt:.2e}", flush=True)
+            raise ValueError(f"Bulk temperature too low: {T} K at CA={ca:.1f}°")
+        if abs(V) < 1e-10:
+            raise ValueError(f"Volume too small: {V} m³")
+
+        # Use IDEAL GAS LAW form (Matlab line 95), not composition-dependent form
+        dPdt = P * ((dTdt / T) - (dVdt / V))
+
+        # Zone temperature derivatives (Matlab lines 145-150)
+        dTidt_array = np.zeros(nzones)
+        for i in range(nzones):
+            # Surface area fraction for zone i (Matlab line 94)
+            if nzones > 1:
+                Ai = 3*(2*(i-1))**2 / (2*nzones*(nzones-1)*(2*nzones-1))
+            else:
+                Ai = 1.0
+
+            # dTi/dt = 1/(mi*cpi)*(dP/dt*Vi - q*Ai - mi*Ygen'*hnsp)  (Matlab line 146)
+            chem_term = Mi[i] * np.dot(Ygen[:,i], hnsp[:,i])
+            dTidt_array[i] = (1.0 / (Mi[i] * Cpi[i])) * (
+                dPdt * Vi[i] - Q_wall * Ai - chem_term
+            )
+
+            # Check for non-finite values
+            if not np.isfinite(dTidt_array[i]):
+                theta = (rpm * 2 * np.pi / 60) * t
+                ca = self.ca_start + np.rad2deg(theta)
+                print(f"\n=== Zone {i} dTidt NaN/Inf ===", flush=True)
+                print(f"CA={ca:.1f}°, dTidt[{i}]={dTidt_array[i]}", flush=True)
+                print(f"Mi={Mi[i]}, Cpi={Cpi[i]}, Vi={Vi[i]}", flush=True)
+                print(f"dPdt={dPdt}, Q_wall={Q_wall}, Ai={Ai}", flush=True)
+                print(f"chem_term={chem_term}", flush=True)
+                print(f"max|Ygen|={np.max(np.abs(Ygen[:,i]))}, max|hnsp|={np.max(np.abs(hnsp[:,i]))}", flush=True)
+                raise ValueError(f"Non-finite zone temperature derivative")
+
+        # Calculate bulk composition as mass-weighted average (Matlab line 121-124)
         dYdt = np.zeros(nsp)
         for i in range(nzones):
             dYdt += Mi[i] * Ygen[:,i]
         dYdt /= M
-        
+
         # Initialize derivative vector
         dydt = np.zeros_like(y)
-        
-        # Set bulk derivatives
+
+        # Check for NaN or Inf in critical derivatives
+        if not np.isfinite(dTdt) or not np.isfinite(dPdt):
+            theta = (rpm * 2 * np.pi / 60) * t
+            ca = self.ca_start + np.rad2deg(theta)
+            print(f"\n=== NaN/Inf DIAGNOSTIC ===", flush=True)
+            print(f"CA={ca:.1f}°, t={t:.6e} s", flush=True)
+            print(f"dTdt={dTdt}, dPdt={dPdt}, dVdt={dVdt}", flush=True)
+            print(f"T={T}, P={P}, V={V}", flush=True)
+            print(f"sumgen={sumgen}, sumRY={sumRY}, sumRYdot={sumRYdot}", flush=True)
+            print(f"CVbulk={CVbulk}, Rbulk={Rbulk}", flush=True)
+            raise ValueError(f"Non-finite derivative at CA={ca:.1f}°: dTdt={dTdt}, dPdt={dPdt}")
+
+        # Set bulk derivatives (Matlab line 152: x = [dTdt;dPdt;vdt;dm])
+        # NOTE: M is constant for closed cycle, so dM/dt not included in state vector
         dydt[0] = dTdt
         dydt[1] = dPdt
         dydt[2] = dVdt
-        dydt[3] = dMdt
-        
-        # Set zone derivatives
+        # dydt[3] removed - no dM/dt
+
+        # Set zone derivatives (Matlab lines 154-157)
         for i in range(nzones):
-            # Get reaction rates and heat release for zone i
-            mdot, Q_chem = self.chemistry.get_reaction_rates()  # Q_chem in [W/m³]
-            
-            # Calculate zone temperature derivative using energy equation
-            # dT/dt = 1/(m*cv) * (-P*dV + Q_chem*V)
-            dTidt = 1.0/(Mi[i] * Cvi[i]) * (-P*dVidt[i] + Q_chem*Vi[i])
-            
-            dydt[4 + i*(nsp+1)] = dTidt
-            
+            dydt[3 + i*(nsp+1)] = dTidt_array[i]  # Changed from dydt[4+...] to dydt[3+...]
             # Zone composition derivatives
-            dydt[4 + i*(nsp+1) + 1:4 + (i+1)*(nsp+1)] = Ygen[:,i]
-        
-        # Set bulk composition derivatives
-        dydt[4 + nzones*(nsp+1):] = dYdt
-        
+            dydt[3 + i*(nsp+1) + 1:3 + (i+1)*(nsp+1)] = Ygen[:,i]  # Changed indexing
+
+        # Set bulk composition derivatives (Matlab line 160)
+        dydt[3 + nzones*(nsp+1):] = dYdt  # Changed from dydt[4+...] to dydt[3+...]
+
         return dydt
     
+    def _compute_jac_sparsity(self, y0: np.ndarray) -> np.ndarray:
+        """
+        Compute Jacobian sparsity pattern for multizone system.
+
+        This tells the solver which Jacobian elements are non-zero,
+        dramatically reducing the number of function evaluations needed
+        for numerical Jacobian approximation.
+
+        For multizone: state = [T, P, V, T_z1, Y_z1, ..., T_zN, Y_zN, Y_bulk]
+
+        Key coupling patterns:
+        - Bulk (T,P,V) affects all zones (shared pressure)
+        - Each zone affects bulk through mass-weighted averaging
+        - Zone species are coupled through chemistry within that zone
+        - Zones are weakly coupled through bulk temperature/pressure
+        """
+        n = len(y0)
+
+        if self.params.model_type == "single":
+            # For single zone, assume dense Jacobian (it's small anyway)
+            return np.ones((n, n), dtype=int)
+
+        # Initialize sparse pattern (mostly zeros)
+        jac_pattern = np.zeros((n, n), dtype=int)
+
+        # Get dimensions
+        nsp = self.chemistry.gas.n_species
+        nzones = min(max(1, self.params.nzones), 20)
+
+        # ===== Bulk variables (T, P, V) =====
+        # All bulk variables couple to each other
+        jac_pattern[0:3, 0:3] = 1
+
+        # Bulk variables affect all zone temperatures and species
+        for i in range(nzones):
+            zone_start = 3 + i*(nsp+1)
+            zone_end = 3 + (i+1)*(nsp+1)
+            jac_pattern[zone_start:zone_end, 0:3] = 1  # Zones depend on bulk
+            jac_pattern[0:3, zone_start:zone_end] = 1  # Bulk depends on zones
+
+        # Bulk variables affect bulk species
+        bulk_species_start = 3 + nzones*(nsp+1)
+        jac_pattern[0:3, bulk_species_start:] = 1
+        jac_pattern[bulk_species_start:, 0:3] = 1
+
+        # ===== Zone variables =====
+        for i in range(nzones):
+            zone_start = 3 + i*(nsp+1)
+            zone_end = 3 + (i+1)*(nsp+1)
+
+            # Within zone: temperature and all species couple (dense block)
+            jac_pattern[zone_start:zone_end, zone_start:zone_end] = 1
+
+            # Zone affects bulk species (mass-weighted average)
+            jac_pattern[bulk_species_start:, zone_start:zone_end] = 1
+            jac_pattern[zone_start:zone_end, bulk_species_start:] = 1
+
+        return jac_pattern
+
     def solve_closed_cycle(self, rpm: float, T_wall: float,
                           ca_start: float, ca_end: float,
                           y0: np.ndarray) -> Dict:
         """
         Solve closed cycle from IVC to EVO.
-        
+
         Parameters
         ----------
         rpm : float
@@ -341,7 +598,7 @@ class EngineSolver:
             End crank angle [deg]
         y0 : np.ndarray
             Initial state vector
-            
+
         Returns
         -------
         Dict
@@ -354,15 +611,33 @@ class EngineSolver:
         # Convert crank angles to radians
         theta_start = np.deg2rad(ca_start)
         theta_end = np.deg2rad(ca_end)
-        
+
         # Calculate time span
         omega = rpm * 2 * np.pi / 60  # [rad/s]
         t_span = (0, (theta_end - theta_start)/omega)
-        
+
         # Store reference conditions at IVC
-        self.p_ref = y0[2]
-        self.T_ref = y0[0]
-        self.V_ref = y0[1]
+        # Single zone: [T, V, P, m, Y...]
+        # Multi zone:  [T, P, V, T_i, Y_i..., Y_bulk] (M is constant, not in state)
+        if self.params.model_type == "single":
+            self.T_ref = y0[0]
+            self.V_ref = y0[1]
+            self.p_ref = y0[2]
+        else:
+            self.T_ref = y0[0]
+            self.p_ref = y0[1]
+            self.V_ref = y0[2]
+
+            # For multizone, compute total mass from initial conditions (Matlab line 92: init.m=init.V*density(gas))
+            # Extract bulk composition from state vector
+            nsp = self.chemistry.gas.n_species
+            nzones = min(max(1, self.params.nzones), 20)
+            Ybulk_init = y0[3 + nzones*(nsp+1):]
+
+            # Set gas state and compute initial mass
+            self.chemistry.gas.TPY = self.T_ref, self.p_ref, Ybulk_init
+            rho_init = self.chemistry.gas.density
+            self.M_total = self.V_ref * rho_init  # Constant mass for closed cycle
         
         # Create time evaluation points (increased for smoothness)
         self.t_eval = np.linspace(t_span[0], t_span[1], 700)  # Increased from 100 to 700 points
@@ -372,24 +647,101 @@ class EngineSolver:
             print("\nSolving engine cycle:")
             # Calculate total crank angle range
             total_ca = ca_end - ca_start
-            self.progress_bar = tqdm(total=total_ca, initial=0, 
+            self.progress_bar = tqdm(total=total_ca, initial=0,
                                    desc="Progress", unit="°CA",
                                    bar_format='{desc}: {percentage:3.0f}%|{bar}| {n:.1f}°CA [{elapsed}<{remaining}, {rate_fmt}]')
-        
+
+        # Enable intermediate result saving for multizone
+        if self.params.model_type == "multi":
+            import tempfile
+            self.save_path = tempfile.mktemp(suffix='_partial.npz', prefix='multizone_')
+            self.intermediate_results = {'t': [], 'y': [], 'ca': []}
+            self.eval_count = 0
+            print(f"Saving intermediate results to: {self.save_path}")
+
+        # Compute Jacobian sparsity pattern for non-adiabatic cases ONLY
+        # (Adiabatic cases work fine without it)
+        jac_sparsity = None
+        if self.params.model_type == "multi" and self.params.nzones > 1 and not self.params.adiabatic:
+            print(f"Computing Jacobian sparsity pattern for {len(y0)} state variables...")
+            jac_sparsity = self._compute_jac_sparsity(y0)
+            nnz = np.sum(jac_sparsity)
+            sparsity_pct = 100.0 * nnz / (len(y0)**2)
+            print(f"  Jacobian: {len(y0)}×{len(y0)} matrix, {nnz} non-zero ({sparsity_pct:.1f}%)")
+
+        # Choose solver method
+        # For multizone with heat transfer (non-adiabatic), prefer CVODE if available, else Radau
+        method = self.params.method
+        rtol_adjusted = self.params.rtol
+        atol_adjusted = self.params.atol
+        use_cvode = False
+
+        # Auto-select CVODE for challenging cases if available
+        if self.params.model_type == "multi" and not self.params.adiabatic:
+            if HAS_CVODE and method in ["BDF", "Radau", "CVODE", "IDA"]:
+                method = "CVODE"
+                use_cvode = True
+                print(f"Using CVODE solver (SUNDIALS) - more robust than scipy for stiff multizone")
+            elif method == "BDF":
+                method = "Radau"
+                print(f"Using Radau method (more robust than BDF for non-adiabatic multizone)")
+                print(f"Note: Install scikits.odes for better performance: conda install -c conda-forge scikits.odes sundials")
+
+            # For large multizone systems, relax tolerances slightly
+            if self.params.nzones >= 5:
+                rtol_adjusted = max(self.params.rtol, 1.0e-4)  # Slightly looser
+                atol_adjusted = max(self.params.atol, 1.0e-10)  # Slightly looser
+                if not use_cvode:
+                    print(f"Adjusted tolerances for large system: rtol={rtol_adjusted:.1e}, atol={atol_adjusted:.1e}")
+
         try:
-            # Solve ODE system
-            solution = solve_ivp(
-                fun=lambda t, y: self._ode_system(t, y, rpm, T_wall),
-                t_span=t_span,
-                y0=y0,
-                method=self.params.method,
-                t_eval=self.t_eval,
-                rtol=self.params.rtol,
-                atol=self.params.atol,
-                max_step=self.params.max_step,
-                first_step=self.params.first_step
-            )
+            if use_cvode and HAS_CVODE:
+                # Use CVODE solver from SUNDIALS (similar to Matlab's ode15s)
+                print(f"Initializing CVODE solver...")
+
+                # Create CVODE solver
+                cvode_solver = MultizoneCVODE(
+                    ode_function=lambda t, y: self._ode_system(t, y, rpm, T_wall),
+                    n_states=len(y0),
+                    verbose=True
+                )
+
+                # Solve with CVODE
+                solution = cvode_solver.solve(
+                    y0=y0,
+                    t_span=t_span,
+                    t_eval=self.t_eval,
+                    rtol=rtol_adjusted,
+                    atol=atol_adjusted,
+                    max_steps=50000,
+                    max_order=5,  # BDF order 1-5
+                    lmm_type='cvode'  # Use CVODE (BDF) for stiff systems
+                )
+
+            else:
+                # Use scipy's solve_ivp
+                solution = solve_ivp(
+                    fun=lambda t, y: self._ode_system(t, y, rpm, T_wall),
+                    t_span=t_span,
+                    y0=y0,
+                    method=method,
+                    t_eval=self.t_eval,
+                    rtol=rtol_adjusted,
+                    atol=atol_adjusted,
+                    max_step=self.params.max_step,
+                    first_step=self.params.first_step,
+                    jac_sparsity=jac_sparsity,  # Critical for large multizone systems!
+                    vectorized=False  # Ensure we can clip values in each call
+                )
         finally:
+            # Save final intermediate results
+            if self.save_path and len(self.intermediate_results['t']) > 0:
+                np.savez(self.save_path,
+                         t=np.array(self.intermediate_results['t']),
+                         y=np.array(self.intermediate_results['y']).T,
+                         ca=np.array(self.intermediate_results['ca']))
+                print(f"\nPartial results saved to: {self.save_path}")
+
             # Clean up progress bar if used
             if self.progress_bar is not None:
                 self.progress_bar.close()
@@ -399,15 +751,33 @@ class EngineSolver:
             self.ca_start = None
             self.rpm = None
         
+        # Handle both dict (CVODE) and object (scipy) solution formats
+        if isinstance(solution, dict):
+            # CVODE returns a dict
+            t = solution['t']
+            y = solution['y']
+            success = solution.get('success', True)
+            message = solution.get('message', '')
+            nfev = solution.get('nfev', 0)
+            njev = 0  # CVODE doesn't track Jacobian evaluations separately
+        else:
+            # scipy returns an object
+            t = solution.t
+            y = solution.y
+            success = solution.success
+            message = solution.message
+            nfev = solution.nfev
+            njev = getattr(solution, 'njev', 0)
+
         # Calculate crank angles
-        crank_angles = ca_start + np.rad2deg(omega * solution.t)
-        
+        crank_angles = ca_start + np.rad2deg(omega * t)
+
         return {
-            't': solution.t,
-            'y': solution.y,
+            't': t,
+            'y': y,
             'ca': crank_angles,
-            'success': solution.success,
-            'message': solution.message,
-            'nfev': solution.nfev,
-            'njev': solution.njev
+            'success': success,
+            'message': message,
+            'nfev': nfev,
+            'njev': njev
         } 

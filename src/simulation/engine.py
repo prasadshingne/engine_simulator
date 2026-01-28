@@ -182,24 +182,29 @@ class EngineSimulation:
             y0[4:] = Y0
         else:
             # Multi-zone model
+            # State vector structure (matching Matlab HCCI_sim_dec038.m lines 121-130):
+            # [T, P, V, T_zone1, Y_zone1, ..., T_zoneN, Y_zoneN, Y_bulk]
+            # Note: Mass M is NOT in state vector (constant for closed cycle)
             nzones = min(max(1, self.config.nzones), 20)  # Limit between 1 and 20 zones
             nsp = len(Y0)
-            y0 = np.zeros(4 + nzones*(nsp+1) + nsp)  # [T,P,V,m] + [T_i,Y_i for each zone] + [Y_bulk]
+            y0 = np.zeros(3 + nzones*(nsp+1) + nsp)  # [T,P,V] + [T_i,Y_i for each zone] + [Y_bulk]
             y0[0] = self.config.temperature  # Bulk T
             y0[1] = self.config.pressure    # Bulk P
             y0[2] = V0                      # Volume
-            y0[3] = m0                      # Total mass
-            
-            # Initialize zone temperatures and compositions
+            # y0[3] = m0  # REMOVED - M is constant, not in state vector
+
+            # Initialize zone temperatures and compositions (Matlab lines 124-129)
+            # IMPORTANT: Use same temperature for all zones initially (Matlab line 45)
+            # oper.tzone=oper.temp*ones(1,oper.nzone);
             for i in range(nzones):
-                # Zone temperature (linear distribution with ±2% variation)
-                T_zone = self.config.temperature * (1.0 + 0.02*(i - nzones/2)/nzones)
-                y0[4 + i*(nsp+1)] = T_zone
+                # Zone temperature (all zones start at bulk temperature)
+                T_zone = self.config.temperature
+                y0[3 + i*(nsp+1)] = T_zone  # Changed from y0[4+...] to y0[3+...]
                 # Zone composition (same as bulk initially)
-                y0[4 + i*(nsp+1) + 1:4 + (i+1)*(nsp+1)] = Y0
-            
-            # Bulk composition
-            y0[4 + nzones*(nsp+1):] = Y0
+                y0[3 + i*(nsp+1) + 1:3 + (i+1)*(nsp+1)] = Y0  # Changed indexing
+
+            # Bulk composition (Matlab line 130)
+            y0[3 + nzones*(nsp+1):] = Y0  # Changed from y0[4+...] to y0[3+...]
         
         return y0
     
@@ -228,7 +233,8 @@ class EngineSimulation:
         results = SimulationResults.from_solver_output(
             solution,
             self.chemistry.gas.species_names,
-            model_type=self.config.model_type
+            model_type=self.config.model_type,
+            mechanism=self.config.mechanism  # Pass mechanism for mass calculation
         )
         
         return results

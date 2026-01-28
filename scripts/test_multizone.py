@@ -29,14 +29,16 @@ def main():
     
     # Configure for multi-zone model
     config.model_type = "multi"
-    config.nzones = 5  # Test with 5 zones
+    config.nzones = 3  # Start with 3 zones for testing
     config.adiabatic = True  # Run in adiabatic mode
-    
-    # Use more appropriate solver parameters for multi-zone model
-    config.rtol = 1.0e-3  # Relaxed relative tolerance
-    config.atol = 1.0e-6  # Relaxed absolute tolerance
-    config.max_step = 1.0e-3  # Larger maximum step size
-    config.first_step = 1.0e-5  # Larger initial step size
+
+    # Use BDF solver - Python's equivalent of Matlab's ode15s
+    # Match Matlab settings: ode15s with RelTol=1e-5, AbsTol=1e-12
+    config.method = "BDF"  # Equivalent to Matlab's ode15s
+    config.rtol = 1.0e-5  # Match Matlab RelTol
+    config.atol = 1.0e-12  # Match Matlab AbsTol
+    config.max_step = 1.0e-3  # Reasonable max step
+    config.first_step = 1.0e-6  # Small initial step
     
     # Run multi-zone model
     print("\nRunning multi-zone model...")
