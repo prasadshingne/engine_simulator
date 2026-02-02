@@ -166,6 +166,10 @@ All cases use the CVODE solver (SUNDIALS BDF method) when available, with scipy 
 
 ![Multi Zone Results](docs/images/multi_zone.png)
 
+### Temperature Stratification
+
+![Temperature Stratification](docs/images/temperature_stratification.png)
+
 ### Run Comparison Mode
 
 Overlay up to 4 simulations with different configurations. Each run is distinguished by line style (solid, dashed, dotted, dash-dot).
