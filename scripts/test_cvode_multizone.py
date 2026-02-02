@@ -5,13 +5,10 @@ Test 10-zone non-adiabatic multizone model using CVODE (SUNDIALS).
 Run with: conda activate py39_sundials && python scripts/test_cvode_multizone.py
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
 import sys
 
-project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root))
+import numpy as np
+import matplotlib.pyplot as plt
 
 # Check if CVODE is available
 try:
@@ -22,18 +19,15 @@ except ImportError:
     print("  Install with: conda install -c conda-forge scikits.odes sundials")
     sys.exit(1)
 
-from src.simulation.engine import EngineConfig, EngineSimulation
-from src.simulation.results import SimulationResults
+from engine_sim.simulation.engine import EngineConfig, EngineSimulation
+from engine_sim.simulation.results import SimulationResults
+from engine_sim.config.paths import get_project_root
 
 
 def main():
     """Run 10-zone non-adiabatic simulation with CVODE."""
-    # Load configuration
-    config_path = project_root / 'src' / 'config' / 'default_config.yaml'
-    config = EngineConfig.from_yaml(str(config_path))
-
-    # Update mechanism path
-    config.mechanism = str(project_root / 'data' / 'mechanisms' / 'Nissan_chem.yaml')
+    # Load configuration (auto-resolves mechanism path)
+    config = EngineConfig.from_yaml()
 
     # Configure for 10-zone WITH HEAT TRANSFER (non-adiabatic)
     config.model_type = "multi"
@@ -160,7 +154,7 @@ def main():
     plt.tight_layout()
 
     # Save figure
-    output_dir = project_root / "data" / "output"
+    output_dir = get_project_root() / "data" / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "10zone_cvode_stratification.png"
     plt.savefig(output_path, dpi=150, bbox_inches='tight')

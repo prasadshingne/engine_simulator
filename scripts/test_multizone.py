@@ -1,31 +1,20 @@
 #!/usr/bin/env python3
 """Test script for multi-zone model."""
 
-import os
-import sys
-from pathlib import Path
-
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Add parent directory to path and set project root
-project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root))
-
-from src.simulation.engine import EngineConfig, EngineSimulation
+from engine_sim.simulation.engine import EngineConfig, EngineSimulation
+from engine_sim.config.paths import get_project_root
 
 def main():
     """Run multi-zone model and plot results."""
     # Create results directory
-    results_dir = project_root / 'data' / 'output' / 'multizone_test'
+    results_dir = get_project_root() / 'data' / 'output' / 'multizone_test'
     results_dir.mkdir(exist_ok=True)
-    
-    # Load base configuration
-    config_path = project_root / 'src' / 'config' / 'default_config.yaml'
-    config = EngineConfig.from_yaml(str(config_path))
-    
-    # Update mechanism path to absolute path
-    config.mechanism = str(project_root / 'data' / 'mechanisms' / 'Nissan_chem.yaml')
+
+    # Load base configuration (auto-resolves mechanism path)
+    config = EngineConfig.from_yaml()
     
     # Configure for multi-zone model
     config.model_type = "multi"

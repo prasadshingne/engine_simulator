@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "engine-sim"
+version = "0.1.0"
+description = "0D HCCI engine cycle simulator with detailed chemical kinetics"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pyyaml",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+cvode = ["scikits.odes"]
+gui = ["streamlit", "plotly"]
+dev = ["pytest", "pytest-cov", "jupyter", "nbformat"]
+all = ["engine-sim[gui,dev]"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["engine_sim*"]
+
+[tool.setuptools.package-data]
+engine_sim = ["config/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (requires Cantera mechanism files)",
+    "cvode: marks tests requiring scikits.odes/SUNDIALS",
+]

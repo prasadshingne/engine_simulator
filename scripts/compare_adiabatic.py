@@ -1,18 +1,12 @@
 """Compare adiabatic and non-adiabatic engine simulations."""
 
-import os
-import sys
 import matplotlib.pyplot as plt
 
-# Add project root to Python path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
-
-from src.simulation.engine import EngineConfig, EngineSimulation
-from src.simulation.solver import SolverParams
+from engine_sim.simulation.engine import EngineConfig, EngineSimulation
+from engine_sim.config.paths import get_project_root
 
 # Load base configuration
-config = EngineConfig.from_yaml(os.path.join(project_root, 'src', 'config', 'default_config.yaml'))
+config = EngineConfig.from_yaml()
 
 # Run non-adiabatic simulation
 print("\nRunning non-adiabatic simulation...")
@@ -50,10 +44,11 @@ plt.grid(True)
 plt.legend()
 
 plt.tight_layout()
-plt.savefig(os.path.join(project_root, 'data', 'output', 'adiabatic_comparison.png'), dpi=300, bbox_inches='tight')
+output_path = get_project_root() / 'data' / 'output' / 'adiabatic_comparison.png'
+plt.savefig(str(output_path), dpi=300, bbox_inches='tight')
 plt.close()
 
-print("\nComparison plot saved as 'data/output/adiabatic_comparison.png'")
+print(f"\nComparison plot saved as '{output_path}'")
 
 # Print some key metrics
 def print_metrics(results, label):

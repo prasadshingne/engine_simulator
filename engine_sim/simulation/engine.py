@@ -8,6 +8,7 @@ from typing import Dict, Optional
 from ..engine.geometry import GeometryParams
 from ..engine.heat_transfer import HeatTransfer, WoschniParams
 from ..models.chemistry import Chemistry, ChemistryParams
+from ..config.paths import get_default_config, resolve_mechanism_path
 from .solver import EngineSolver, SolverParams
 from .results import SimulationResults
 
@@ -54,8 +55,16 @@ class EngineConfig:
     dpi: int          # Plot resolution
     
     @classmethod
-    def from_yaml(cls, config_path: str):
-        """Load configuration from YAML file."""
+    def from_yaml(cls, config_path: str = None):
+        """Load configuration from YAML file.
+
+        Parameters
+        ----------
+        config_path : str, optional
+            Path to YAML config file. If None, uses the bundled default config.
+        """
+        if config_path is None:
+            config_path = str(get_default_config())
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
             
@@ -113,7 +122,10 @@ class EngineSimulation:
             Simulation configuration
         """
         self.config = config
-        
+
+        # Auto-resolve mechanism path
+        config.mechanism = resolve_mechanism_path(config.mechanism)
+
         # Initialize geometry
         self.geom = GeometryParams(
             bore=config.bore,

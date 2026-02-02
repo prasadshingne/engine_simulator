@@ -676,17 +676,18 @@ class EngineSolver:
         atol_adjusted = self.params.atol
         use_cvode = False
 
-        # Auto-select CVODE for challenging cases if available
-        if self.params.model_type == "multi" and not self.params.adiabatic:
-            if HAS_CVODE and method in ["BDF", "Radau", "CVODE", "IDA"]:
-                method = "CVODE"
-                use_cvode = True
-                print(f"Using CVODE solver (SUNDIALS) - more robust than scipy for stiff multizone")
-            elif method == "BDF":
-                method = "Radau"
-                print(f"Using Radau method (more robust than BDF for non-adiabatic multizone)")
-                print(f"Note: Install scikits.odes for better performance: conda install -c conda-forge scikits.odes sundials")
+        # Use CVODE (SUNDIALS) when available, fall back to scipy otherwise
+        if HAS_CVODE and method in ["BDF", "Radau", "CVODE", "IDA", "LSODA"]:
+            method = "CVODE"
+            use_cvode = True
+            print(f"Using CVODE solver (SUNDIALS)")
+        elif method in ["CVODE", "IDA"]:
+            # CVODE requested but not available, fall back to LSODA
+            method = "LSODA"
+            print(f"CVODE not available, falling back to LSODA")
+            print(f"Note: Install scikits.odes for better performance: conda install -c conda-forge scikits.odes sundials")
 
+        if self.params.model_type == "multi":
             # For large multizone systems, relax tolerances slightly
             if self.params.nzones >= 5:
                 rtol_adjusted = max(self.params.rtol, 1.0e-4)  # Slightly looser
