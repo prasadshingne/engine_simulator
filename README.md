@@ -156,13 +156,21 @@ All cases use the CVODE solver (SUNDIALS BDF method) when available, with scipy 
 | Compression ratio | 12.5:1 |
 | Displacement | ~0.5 L |
 
-## Sample Results
+## GUI Screenshots
 
-![HCCI Engine Simulation Results](data/output/interactive_plots.png)
+### Single Zone HCCI Simulation
 
-### Multizone Temperature Stratification
+![Single Zone Results](docs/images/single_zone.png)
 
-![Multizone Stratification](data/output/10zone_cvode_stratification.png)
+### Multi Zone HCCI Simulation
+
+![Multi Zone Results](docs/images/multi_zone.png)
+
+### Run Comparison Mode
+
+Overlay up to 4 simulations with different configurations. Each run is distinguished by line style (solid, dashed, dotted, dash-dot).
+
+![Comparison Mode](docs/images/comparison.png)
 
 ## Limitations
 
