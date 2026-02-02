@@ -1,69 +1,87 @@
 # Engine Simulator
 
-A zero-dimensional (0D) engine simulator for modeling closed-cycle operation with detailed chemical kinetics. The simulator uses a reduced iso-octane mechanism developed by Nissan [1] for efficient yet accurate combustion predictions.
+A zero-dimensional (0D) engine cycle simulator with detailed chemical kinetics and an interactive GUI. Built as a learning tool for understanding HCCI combustion, heat transfer, and multi-zone modeling.
 
 ## Features
 
-- Closed-cycle engine simulation (IVC to EVO)
-- **Single-zone and multi-zone models** (up to 10+ zones)
-- Detailed chemical kinetics using Cantera
-- Woschni heat transfer model
+- **Single-zone and multi-zone HCCI models** (up to 50 zones)
+- Detailed chemical kinetics via Cantera (33-species iso-octane mechanism)
+- Woschni heat transfer correlation
 - EGR handling with equilibrium composition
-- **Temperature stratification modeling** (multizone with heat transfer)
-- Interactive plotting of results
-- **CVODE solver support** (SUNDIALS) for robust handling of stiff chemistry
+- Temperature stratification modeling (multi-zone with wall heat transfer)
+- **Interactive Streamlit GUI** with Plotly plots
+- **Run comparison mode** — overlay up to 4 simulations with different configurations
+- **CVODE solver** (SUNDIALS) for robust handling of stiff chemistry
+- Jupyter tutorial notebooks
+- pytest test suite (50 tests)
+
+## Installation
+
+```bash
+# Clone and install as editable package
+git clone <repo-url>
+cd 0D_engine_simulator
+pip install -e .
+
+# Install CVODE solver (recommended)
+conda install -c conda-forge scikits.odes sundials
+
+# Install GUI dependencies
+pip install -e ".[gui]"
+
+# Install development dependencies (tests, notebooks)
+pip install -e ".[dev]"
+```
+
+Requires Python 3.9+ and Cantera 2.6+.
+
+## Quick Start
+
+### Interactive GUI
+
+```bash
+streamlit run engine_sim/gui/app.py
+```
+
+The GUI lets you configure equivalence ratio, EGR fraction, engine geometry, operating conditions, and model type (Single Zone HCCI or Multi Zone HCCI). Run simulations and compare results interactively.
+
+### Command Line
+
+```bash
+python scripts/run_simulation.py
+```
+
+### Jupyter Notebooks
+
+```
+notebooks/01_quickstart.ipynb              # Run your first simulation
+notebooks/02_engine_geometry.ipynb         # Slider-crank kinematics and geometry
+notebooks/03_multizone_and_heat_transfer.ipynb  # Multi-zone model and Woschni correlation
+```
 
 ## Project Structure
 
 ```
 .
-├── src/               # Core simulation code
-│   ├── engine/       # Engine geometry and heat transfer
-│   ├── models/       # Physical models (chemistry, etc.)
-│   ├── simulation/   # Solver and simulation code
-│   └── config/       # Configuration files
-├── scripts/          # Runnable scripts
-├── data/             # Data files
-│   ├── input/        # Input data files
-│   ├── mechanisms/   # Reaction mechanisms
-│   └── output/       # Simulation results
-├── tests/            # Test files
-└── docs/             # Documentation
+├── engine_sim/            # Python package
+│   ├── config/            # Default config YAML and path utilities
+│   ├── engine/            # Geometry and heat transfer
+│   ├── models/            # Chemistry (Cantera wrapper)
+│   ├── simulation/        # ODE solver, engine driver, results
+│   ├── gui/               # Streamlit app and Plotly plotting
+│   └── visualization/     # (reserved)
+├── scripts/               # Standalone runnable scripts
+├── notebooks/             # Jupyter tutorial notebooks
+├── tests/                 # pytest test suite
+├── data/
+│   ├── mechanisms/        # Cantera reaction mechanisms
+│   └── output/            # Simulation output files
+└── pyproject.toml         # Package metadata and dependencies
 ```
-
-## Requirements
-
-- Python 3.9+
-- Cantera 2.6+
-- NumPy
-- SciPy
-- Matplotlib
-- PyYAML
-- tqdm
-- **scikits.odes** (optional, recommended for multizone non-adiabatic simulations)
-
-## Quick Start
-
-1. Install dependencies:
-```bash
-pip install cantera numpy scipy matplotlib pyyaml tqdm
-```
-
-2. (Optional) For multizone non-adiabatic simulations, install CVODE solver:
-```bash
-conda install -c conda-forge scikits.odes sundials
-```
-
-3. Run simulation:
-```bash
-python scripts/run_simulation.py
-```
-
-The simulation results will be saved in `data/output/`.
 
 ## Configuration
 
-Engine and simulation parameters can be modified in `src/config/default_config.yaml`. Key parameters include:
+Engine and simulation parameters can be set via the GUI sidebar, or modified in `engine_sim/config/default_config.yaml`:
 
 ```yaml
 engine:
@@ -72,7 +90,7 @@ engine:
     stroke: 0.086        # Stroke length [m]
     con_rod: 0.1455      # Connecting rod length [m]
     comp_ratio: 12.5     # Compression ratio [-]
-    
+
   operating_conditions:
     speed: 2000          # Engine speed [rpm]
     wall_temp: 400       # Wall temperature [K]
@@ -82,262 +100,78 @@ chemistry:
   fuel: "C8H18"         # Fuel species (iso-octane)
   phi: 0.7              # Equivalence ratio [-]
   egr: 0.3              # EGR fraction [-]
-    
+
 initial_conditions:
   pressure: 1.0e5        # Initial pressure [Pa]
   temperature: 450       # Initial temperature [K]
 ```
 
-## References
+## Testing
 
-[1] T. Tsurushima, "A new skeletal PRF kinetic model for HCCI combustion," Proceedings of the Combustion Institute, vol. 32, no. 2, pp. 2835-2841, 2009. [DOI: 10.1016/j.proci.2008.06.018](https://doi.org/10.1016/j.proci.2008.06.018)
+```bash
+# Run all tests
+pytest
+
+# Skip slow tests (chemistry initialization)
+pytest -m "not slow"
+
+# Skip tests requiring CVODE
+pytest -m "not cvode"
+```
+
+## Model Formulation
+
+### Governing Equations
+
+The simulator solves conservation equations for a reacting variable-volume system:
+
+1. **Energy conservation** — temperature evolution from compression work, chemical heat release, and wall heat transfer
+2. **Species conservation** — mass fraction evolution from chemical kinetics
+3. **Pressure evolution** — derived from the ideal gas equation of state
+4. **Volume kinematics** — slider-crank mechanism
+
+**Single-zone state vector:** `[T, V, P, m, Y₁...Y₃₃]`
+
+**Multi-zone state vector:** `[T_bulk, P, V, T₁, Y₁...Y₃₃, ..., Tₙ, Y₁...Y₃₃, Y_bulk]`
+
+### Multi-Zone Model
+
+The cylinder is divided into concentric zones from the hot core to the wall-adjacent region. Each zone has its own temperature and composition but shares a common pressure. Wall-adjacent zones lose more heat, creating thermal stratification that affects combustion phasing.
+
+### Heat Transfer
+
+Wall heat transfer uses the Woschni correlation with coefficients C₁ = 2.28 (compression/expansion) and C₂ = 0.00324 (combustion).
+
+### Numerical Solution
+
+All cases use the CVODE solver (SUNDIALS BDF method) when available, with scipy LSODA as fallback. CVODE provides superior stability for the stiff ODE systems arising from detailed chemistry.
+
+## Engine Specifications (Default)
+
+| Parameter | Value |
+|-----------|-------|
+| Bore | 86 mm |
+| Stroke | 86 mm |
+| Connecting rod | 145.5 mm |
+| Compression ratio | 12.5:1 |
+| Displacement | ~0.5 L |
 
 ## Sample Results
 
 ![HCCI Engine Simulation Results](data/output/interactive_plots.png)
 
-The figure shows typical simulation results for a closed-cycle HCCI simulation from IVC (-180°) to EVO (180°), including:
-- P-V diagram showing compression, combustion, and expansion
-- Temperature and pressure evolution over the cycle
-- Major and minor species concentrations
-- Mass conservation verification
-
-### Adiabatic vs Non-Adiabatic Comparison
-
-The simulator supports both adiabatic and non-adiabatic operation modes. The adiabatic mode disables heat transfer to the cylinder walls, providing a useful baseline for validating the thermodynamic model and understanding the impact of heat transfer.
-
-![Adiabatic Comparison](data/output/adiabatic_comparison.png)
-
-The comparison shows:
-- Higher peak temperatures in adiabatic operation due to no heat loss
-- Higher peak pressures in adiabatic operation
-- Differences in expansion behavior due to heat transfer effects
-
-You can run this comparison using:
-```bash
-python scripts/compare_adiabatic.py
-```
-
 ### Multizone Temperature Stratification
-
-The multizone model captures temperature stratification effects from wall heat transfer. Each zone evolves independently with its own temperature and composition, while sharing a common pressure.
 
 ![Multizone Stratification](data/output/10zone_cvode_stratification.png)
 
-The multizone results show:
-- Temperature stratification between core and wall zones (~1200 K spread at peak)
-- Zone-by-zone combustion phasing differences
-- More realistic heat transfer modeling with thermal boundary layers
-
-Run the 10-zone non-adiabatic simulation:
-```bash
-python scripts/test_cvode_multizone.py
-```
-
-#### How Temperature Stratification Develops
-
-The multizone model divides the cylinder into concentric zones, from the hot core to the cooler wall-adjacent region. Each zone experiences different heat loss rates based on its surface area fraction exposed to the cylinder wall.
-
-![Multizone Heat Transfer Model](data/output/multizone_heat_transfer_model.png)
-
-The surface area fraction for each zone is calculated as:
-
-```
-Ai = 3(2(i-1))² / [2 × Nzones × (Nzones-1) × (2×Nzones-1)]
-```
-
-where:
-- Zone 1 (core): Ai = 0 — no direct wall contact, stays hottest
-- Zone N (wall): Maximum Ai — highest heat loss, coolest temperature
-
-This creates a thermal boundary layer effect:
-- **Core zones** retain heat from compression and combustion
-- **Wall-adjacent zones** lose heat to the cylinder wall
-- **Temperature spread** of ~1000-1200 K develops during combustion
-- **Combustion phasing** differs between zones due to temperature-dependent kinetics
-
-## Model Formulation
-
-### Key Assumptions
-
-**Single-zone model:**
-- Uniform temperature and composition across the cylinder
-- Uniform heat transfer across cylinder walls
-
-**Multizone model:**
-- Concentric zones with individual temperatures and compositions
-- Shared pressure across all zones (pressure equilibration)
-- Zone-specific heat transfer based on wall surface area fraction
-
-**Common assumptions:**
-- Ideal gas behavior
-- No crevice effects
-- No blow-by losses
-
-### Governing Equations
-
-The model solves the following conservation equations for a reacting variable volume system:
-
-1. **Mass Conservation**
-   ```
-   dm/dt = Σ ṁⱼ
-   ```
-   where:
-   - m = total mass in cylinder
-   - ṁⱼ = mass flow rates (intake, exhaust, fuel injection)
-   - For closed cycle: dm/dt = 0
-
-2. **Species Conservation**
-   ```
-   dYₖ/dt = Σⱼ (ṁⱼ/m)(Yₖʲ - Yₖᶜʸˡ) + (ΩₖWₖ)/ρ
-   ```
-   where:
-   - Yₖ = mass fraction of species k
-   - Yₖʲ = mass fraction of species k in flow j
-   - Yₖᶜʸˡ = mass fraction of species k in cylinder
-   - Ωₖ = molar production rate of species k
-   - Wₖ = molecular weight of species k
-   - ρ = gas density
-
-3. **Energy Conservation**
-   ```
-   dT/dt = (1/mCᵥ)[-p(dv/dt) - m Σₖ uₖ(dYₖ/dt) - (dm/dt)ū - Qw + Σⱼ ṁⱼhⱼ]
-   ```
-   where:
-   - T = temperature
-   - Cᵥ = specific heat at constant volume
-   - p = pressure
-   - v = specific volume
-   - uₖ = specific internal energy of species k
-   - ū = average specific internal energy
-   - Qw = wall heat transfer rate
-   - hⱼ = specific enthalpy of flow j
-
-4. **Pressure Evolution** (from ideal gas law)
-   ```
-   dP/dt = P[(Σᵢ Rᵢ(dYᵢ/dt)/R) + (ṁ/m) + (Ṫ/T) - (V̇/V)]
-   ```
-   where:
-   - P = pressure
-   - Rᵢ = specific gas constant of species i
-   - R = mixture gas constant
-   - V = volume
-   - Dots represent time derivatives
-
-### Notes on Implementation
-
-- Index j corresponds to flows (intake, exhaust, fuel injection)
-- Index k represents species (33 species in NISSAN PRF mechanism)
-- Ω represents molar production rates from chemical kinetics
-- W represents molecular weights
-- Barred quantities (ū) represent mixture-averaged values
-- Wall heat transfer (Qw) is modeled using Woschni correlation
-- Volume change (dv/dt) is calculated from slider-crank kinematics
-- Chemical kinetics (Ωₖ) are handled by Cantera
-- LSODA solver handles the stiff ODE system
-
-### Numerical Solution
-
-The equations are solved using:
-- Variable time step solvers (LSODA or CVODE)
-- Adaptive error control (rtol=1e-4, atol=1e-6)
-- Crank angle as independent variable
-- Single-zone state vector: y = [T, V, P, m, Y₁...Y₃₃]
-- Multizone state vector: y = [T, P, V, T₁, Y₁...Y₃₃, ..., Tₙ, Y₁...Y₃₃, Y_bulk₁...Y_bulk₃₃]
-- Chemical source terms from Cantera
-- Thermodynamic properties from NASA polynomials
-
-For extremely stiff multizone systems with heat transfer, the CVODE solver (SUNDIALS) provides superior stability compared to scipy's LSODA.
-
-### Heat Transfer Model
-
-Wall heat transfer is modeled using the Woschni correlation:
-- Heat transfer coefficient: h = C·d^(-0.2)·p^(0.8)·T^(-0.53)·w^(0.8)
-- Characteristic velocity (w) includes:
-  - Mean piston speed term (C1·Up)
-  - Combustion term (C2·Vd·T1/p1V1·(p-pm))
-- Model coefficients:
-  - C1 = 2.28 (compression/expansion)
-  - C2 = 0.00324 (combustion)
-  - Overall coefficient C = 3.26
-
-### Chemical Kinetics
-
-The simulation uses the Nissan reduced mechanism for iso-octane oxidation:
-- 33 species
-- Handles both low and high-temperature chemistry
-- Validated for HCCI conditions
-- Implemented through Cantera's chemical kinetics solver
-
-## Engine Specifications
-
-Current configuration models a single-cylinder engine with:
-
-- Bore: 86 mm
-- Stroke: 86 mm
-- Connecting rod length: 145.5 mm
-- Compression ratio: 12.5:1
-- Displacement: 0.5 L
-
-## Operating Conditions
-
-Current simulation capabilities include:
-- Engine speed: 2000 rpm
-- Initial temperature: 400 K
-- Initial pressure: 1.0 bar
-- Equivalence ratio: 0.7
-- Residual gas fraction: 30%
-- Wall temperature: 400 K
-
-## Numerical Implementation
-
-The simulation uses:
-- Python with Cantera for chemical kinetics
-- LSODA solver for single-zone and adiabatic multizone simulations
-- CVODE solver (SUNDIALS) for non-adiabatic multizone simulations
-- Adaptive time stepping with:
-  - Relative tolerance: 1e-4 to 1e-5
-  - Absolute tolerance: 1e-6 to 1e-12
-  - Maximum step size: 1e-3 s
-  - Initial step size: 1e-6 s
-
-## Current Capabilities
-
-The simulator can predict:
-1. Temperature and pressure evolution
-2. Chemical species concentrations
-3. Heat release rates
-4. Wall heat transfer
-5. P-V diagram
-6. Mass evolution
-7. Temperature stratification (multizone model)
-8. Zone-by-zone combustion phasing (multizone model)
-
-## Output Visualization
-
-The code generates several plots:
-1. Gas temperature vs. crank angle
-2. Cylinder pressure vs. crank angle
-3. In-cylinder mass vs. crank angle
-4. P-V diagram
-5. Valve lift profiles
-
 ## Limitations
 
-Current limitations include:
-1. No direct fuel injection modeling
-2. Limited to closed cycle (IVC to EVO)
-3. No turbulence modeling
-4. Simplified wall heat transfer (Woschni correlation)
-5. No inter-zone mass transfer in multizone model
+- Closed cycle only (IVC to EVO)
+- No direct injection modeling
+- No turbulence modeling
+- No inter-zone mass transfer
+- No crevice or blow-by losses
 
-## Future Work
+## References
 
-Planned improvements:
-1. Direct injection capabilities
-2. Full cycle simulation
-3. Turbulence effects
-4. More detailed heat transfer models
-5. Crevice flow modeling
-6. Blow-by losses
-7. Inter-zone mass transfer for multizone model
+[1] T. Tsurushima, "A new skeletal PRF kinetic model for HCCI combustion," *Proceedings of the Combustion Institute*, vol. 32, no. 2, pp. 2835-2841, 2009. [DOI: 10.1016/j.proci.2008.06.018](https://doi.org/10.1016/j.proci.2008.06.018)
