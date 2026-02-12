@@ -3,15 +3,15 @@
 import numpy as np
 import cantera as ct
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Union
 
 @dataclass
 class ChemistryParams:
     """Chemistry parameters."""
-    mechanism: str        # Mechanism file path
-    fuel: str            # Fuel species name
-    phi: float           # Equivalence ratio
-    egr: float           # EGR fraction
+    mechanism: str                  # Mechanism file path
+    fuel: Union[str, Dict[str, float]]  # Fuel species name or multi-component dict
+    phi: float                      # Equivalence ratio
+    egr: float                      # EGR fraction
     
 class Chemistry:
     """Interface for chemical kinetics calculations."""
@@ -33,7 +33,11 @@ class Chemistry:
         
         print("\nInitializing chemistry:")
         print("Available species:", self.gas.species_names)
-        print("Fuel species:", self.params.fuel)
+        if isinstance(self.params.fuel, dict):
+            fuel_str = ', '.join(f'{k}: {v:.0%}' for k, v in self.params.fuel.items())
+            print(f"Fuel blend: {fuel_str}")
+        else:
+            print("Fuel species:", self.params.fuel)
         print("Number of reactions:", len(self.gas.reactions()))
         
         # Check multipliers for first few reactions
@@ -171,10 +175,7 @@ class Chemistry:
             
             # Update state
             self.gas.TPY = T, P, Y
-            
-            # Ensure reactions stay enabled
-            self.gas.set_multiplier(1.0)
-            
+
             # Verify state is valid
             if not np.isfinite(self.gas.cp_mass):
                 raise ValueError("Invalid thermodynamic state (non-finite cp)")

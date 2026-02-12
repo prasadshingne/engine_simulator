@@ -5,7 +5,8 @@ A zero-dimensional (0D) engine cycle simulator with detailed chemical kinetics a
 ## Features
 
 - **Single-zone and multi-zone HCCI models** (up to 50 zones)
-- Detailed chemical kinetics via Cantera (33-species iso-octane mechanism)
+- **Two reaction mechanisms:** Nissan PRF (33 species) and LLNL Gasoline Surrogate (312 species)
+- **Cantera ReactorNet solver** for large mechanisms — N coupled `IdealGasMoleReactor` instances with GMRES + AdaptivePreconditioner (10 zones x 312 species in ~46 s)
 - Woschni heat transfer correlation
 - EGR handling with equilibrium composition
 - Temperature stratification modeling (multi-zone with wall heat transfer)
@@ -130,9 +131,9 @@ The simulator solves conservation equations for a reacting variable-volume syste
 3. **Pressure evolution** — derived from the ideal gas equation of state
 4. **Volume kinematics** — slider-crank mechanism
 
-**Single-zone state vector:** `[T, V, P, m, Y₁...Y₃₃]`
+**Single-zone state vector:** `[T, V, P, m, Y₁...Yₙ]`
 
-**Multi-zone state vector:** `[T_bulk, P, V, T₁, Y₁...Y₃₃, ..., Tₙ, Y₁...Y₃₃, Y_bulk]`
+**Multi-zone state vector:** `[T_bulk, P, V, T₁, Y₁...Yₙ, ..., Tₖ, Y₁...Yₙ, Y_bulk]`
 
 ### Multi-Zone Model
 
@@ -144,7 +145,8 @@ Wall heat transfer uses the Woschni correlation with coefficients C₁ = 2.28 (c
 
 ### Numerical Solution
 
-All cases use the CVODE solver (SUNDIALS BDF method) when available, with scipy LSODA as fallback. CVODE provides superior stability for the stiff ODE systems arising from detailed chemistry.
+- **Small mechanisms** (< 100 species): CVODE solver (SUNDIALS BDF method) when available, with scipy LSODA as fallback.
+- **Large mechanisms** (100+ species): Auto-dispatches to Cantera's ReactorNet solver, which uses CVODES with analytical Jacobians computed in C++. For multizone, N `IdealGasMoleReactor` instances are coupled via pressure-equilibration walls and driven by proportional piston velocity callbacks. GMRES with `AdaptivePreconditioner` avoids the O(N³) cost of dense linear solves.
 
 ## Engine Specifications (Default)
 

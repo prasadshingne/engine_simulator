@@ -26,8 +26,8 @@ initial_conditions:
     
 solver:
   method: "LSODA"       # solver method
-  rtol: 1.0e-5          # relative tolerance (tightened for chemistry)
-  atol: 1.0e-8          # absolute tolerance (tightened for chemistry)
+  rtol: 1.0e-8          # relative tolerance (tight for HCCI combustion accuracy)
+  atol: 1.0e-10         # absolute tolerance (tight for HCCI combustion accuracy)
   max_step: 1.0e-4      # maximum step size (reduced for stability)
   first_step: 1.0e-6    # initial step size (reduced for stability)
   adiabatic: false       # whether to run in adiabatic mode (no heat transfer)

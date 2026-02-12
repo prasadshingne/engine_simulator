@@ -7,15 +7,21 @@ import pandas as pd
 from engine_sim.simulation.engine import EngineConfig, EngineSimulation
 from engine_sim.simulation.results import SimulationResults
 from engine_sim.gui.plotting import plot_results_dashboard, plot_zone_temperatures
+from engine_sim.config.mechanisms import MECHANISM_PRESETS, DEFAULT_MECHANISM
 
 MAX_SAVED_RUNS = 4
 
 
-def _make_run_label(config) -> str:
+def _make_run_label(config, mech_name: str = "") -> str:
     """Generate a short descriptive label from the config."""
     model = "SZ" if config.model_type == "single" else f"MZ-{config.nzones}"
     adi = "adi" if config.adiabatic else "non-adi"
-    return f"{model}, phi={config.phi:.2f}, {adi}"
+    # Short mechanism name: "PRF" or "GS"
+    if "Gasoline" in mech_name:
+        mech_short = "GS"
+    else:
+        mech_short = "PRF"
+    return f"{mech_short}, {model}, phi={config.phi:.2f}, {adi}"
 
 
 def main():
@@ -35,6 +41,15 @@ def main():
     # ── Sidebar: all inputs ──────────────────────────────────────────────
     with st.sidebar:
         st.header("Configuration")
+
+        # --- Mechanism ---
+        st.subheader("Mechanism")
+        mech_names = list(MECHANISM_PRESETS.keys())
+        mech_name = st.selectbox("Reaction Mechanism", mech_names, index=0)
+        preset = MECHANISM_PRESETS[mech_name]
+        st.caption(preset["fuel_label"])
+        if "Gasoline" in mech_name:
+            st.info("312 species — auto-dispatches to Cantera ReactorNet solver with GMRES + preconditioner.")
 
         # --- Mixture ---
         st.subheader("Mixture")
@@ -63,15 +78,8 @@ def main():
         nzones = 1
         if model_type == "Multi Zone HCCI":
             nzones = st.slider("Number of Zones", 2, 50, 10)
-            if not adiabatic and nzones > 3:
-                # Check if CVODE is available
-                try:
-                    from engine_sim.simulation.solver_ida import check_cvode_available
-                    if not check_cvode_available():
-                        st.warning("CVODE not installed. Non-adiabatic multizone may fail with scipy. "
-                                   "Install: `conda install -c conda-forge scikits.odes sundials`")
-                except ImportError:
-                    st.warning("CVODE not installed. Non-adiabatic multizone may fail.")
+            if "Gasoline" in mech_name and nzones > 5:
+                st.caption(f"10 zones x 312 species ~ 46 s with Cantera solver")
 
         # --- Run button ---
         st.divider()
@@ -92,6 +100,7 @@ def main():
             con_rod_mm=con_rod_mm, comp_ratio=comp_ratio,
             rpm=rpm, T_init=T_init, P_init_bar=P_init_bar, T_wall=T_wall,
             model_type=model_type, adiabatic=adiabatic, nzones=nzones,
+            mech_name=mech_name,
         )
     elif 'results' in st.session_state:
         # Show cached results if available
@@ -101,10 +110,15 @@ def main():
 
 
 def _run_simulation(*, phi, egr, bore_mm, stroke_mm, con_rod_mm, comp_ratio,
-                    rpm, T_init, P_init_bar, T_wall, model_type, adiabatic, nzones):
+                    rpm, T_init, P_init_bar, T_wall, model_type, adiabatic, nzones,
+                    mech_name):
     """Build config, run simulation, cache and display results."""
+    preset = MECHANISM_PRESETS[mech_name]
+
     # Build config
     config = EngineConfig.from_yaml()
+    config.mechanism = preset["file"]
+    config.fuel = preset["fuel"]
     config.phi = phi
     config.egr = egr
     config.bore = bore_mm / 1000.0
@@ -148,6 +162,8 @@ def _run_simulation(*, phi, egr, bore_mm, stroke_mm, con_rod_mm, comp_ratio,
         st.session_state['config'] = config
         st.session_state['solver_output'] = sol
         st.session_state['species_names'] = sim.chemistry.gas.species_names
+        st.session_state['mech_name'] = mech_name
+        st.session_state['major_species'] = preset["major_species"]
 
         progress_bar.progress(100, text="Done!")
         progress_bar.empty()
@@ -166,10 +182,20 @@ def _display_results():
     config = st.session_state['config']
     saved_runs = st.session_state.get('saved_runs', [])
 
+    mech_name = st.session_state.get('mech_name', DEFAULT_MECHANISM)
+    major_species = st.session_state.get('major_species', MECHANISM_PRESETS[DEFAULT_MECHANISM]["major_species"])
+
     # Build the runs list for plotting
-    current_label = _make_run_label(config)
+    current_label = _make_run_label(config, mech_name)
     runs = [(r['label'], r['results']) for r in saved_runs]
     runs.append((current_label, results))
+
+    # Collect all major species across saved runs + current
+    all_major = list(major_species)
+    for r in saved_runs:
+        for sp in r.get('major_species', []):
+            if sp not in all_major:
+                all_major.append(sp)
 
     has_comparison = len(runs) > 1
 
@@ -205,7 +231,11 @@ def _display_results():
         if len(saved_runs) >= MAX_SAVED_RUNS:
             st.warning(f"Maximum {MAX_SAVED_RUNS} saved runs. Clear some first.")
         else:
-            saved_runs.append({'label': current_label, 'results': results})
+            saved_runs.append({
+                'label': current_label,
+                'results': results,
+                'major_species': list(major_species),
+            })
             st.session_state['saved_runs'] = saved_runs
             st.rerun()
     if clear_clicked:
@@ -213,7 +243,7 @@ def _display_results():
         st.rerun()
 
     # ── Main results dashboard (overlay all runs) ────────────────────
-    fig = plot_results_dashboard(runs)
+    fig = plot_results_dashboard(runs, major_species=all_major)
     st.plotly_chart(fig, use_container_width=True)
 
     # ── Multizone zone temperatures (current run only) ───────────────

@@ -3,7 +3,7 @@
 import numpy as np
 import yaml
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 from ..engine.geometry import GeometryParams
 from ..engine.heat_transfer import HeatTransfer, WoschniParams
@@ -30,9 +30,9 @@ class EngineConfig:
     end_ca: float        # End crank angle [deg]
     
     # Chemistry
-    mechanism: str       # Mechanism file path
-    fuel: str           # Fuel species name
-    phi: float          # Equivalence ratio
+    mechanism: str                          # Mechanism file path
+    fuel: Union[str, Dict[str, float]]     # Fuel species name or multi-component dict
+    phi: float                              # Equivalence ratio
     egr: float          # EGR fraction
     
     # Initial conditions
@@ -85,7 +85,7 @@ class EngineConfig:
             
             # Chemistry
             mechanism=str(config['chemistry']['mechanism']),
-            fuel=str(config['chemistry']['fuel']),
+            fuel=config['chemistry']['fuel'],  # str or dict for multi-component
             phi=float(config['chemistry']['phi']),
             egr=float(config['chemistry']['egr']),
             

@@ -9,17 +9,35 @@ from engine_sim.simulation.results import SimulationResults
 DASH_STYLES = ['solid', 'dash', 'dot', 'dashdot']
 
 
-def plot_results_dashboard(runs) -> go.Figure:
+DEFAULT_MAJOR_SPECIES = ['C8H18', 'O2', 'CO2', 'H2O']
+
+# Colors for species (cover both Nissan PRF and LLNL Gasoline Surrogate names)
+SPECIES_COLORS = {
+    'C8H18': '#ff7f0e', 'IC8H18': '#ff7f0e',
+    'NC7H16': '#8c564b', 'C7H16': '#8c564b',
+    'C6H5CH3': '#e377c2',
+    'O2': '#2ca02c',
+    'CO2': '#9467bd',
+    'H2O': '#17becf',
+}
+
+
+def plot_results_dashboard(runs, major_species=None) -> go.Figure:
     """Create a 2x2 dashboard of simulation results.
 
     Parameters
     ----------
     runs : SimulationResults or list of (label, SimulationResults)
         A single result or a list of labelled results to overlay.
+    major_species : list of str, optional
+        Species to plot in the species subplot. If None, uses default.
     """
     # Normalise input
     if isinstance(runs, SimulationResults):
         runs = [('Run', runs)]
+
+    if major_species is None:
+        major_species = DEFAULT_MAJOR_SPECIES
 
     fig = make_subplots(
         rows=2, cols=2,
@@ -70,15 +88,11 @@ def plot_results_dashboard(runs) -> go.Figure:
         )
 
         # Major species
-        species_colors = {
-            'C8H18': '#ff7f0e', 'O2': '#2ca02c',
-            'CO2': '#9467bd', 'H2O': '#17becf',
-        }
-        for sp_name in ['C8H18', 'O2', 'CO2', 'H2O']:
+        for sp_name in major_species:
             if sp_name not in results.species_names:
                 continue
             idx = results.species_names.index(sp_name)
-            # Show species legend for first run only (color key)
+            # Show species legend for first run that has this species
             show_sp = (run_idx == 0)
             fig.add_trace(
                 go.Scatter(
@@ -86,7 +100,7 @@ def plot_results_dashboard(runs) -> go.Figure:
                     mode='lines',
                     name=sp_name,
                     line=dict(
-                        color=species_colors.get(sp_name),
+                        color=SPECIES_COLORS.get(sp_name, '#333333'),
                         width=2, dash=dash,
                     ),
                     showlegend=show_sp,

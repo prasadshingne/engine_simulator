@@ -88,7 +88,8 @@ class MultizoneCVODE:
               atol: float = 1.0e-10,
               max_steps: int = 50000,
               max_order: int = 5,
-              lmm_type: str = 'cvode') -> Dict:
+              lmm_type: str = 'cvode',
+              max_step_size: float = 0.0) -> Dict:
         """
         Solve the ODE system using CVODE.
 
@@ -149,13 +150,16 @@ class MultizoneCVODE:
             solver = ode('cvode', self.rhs_function, old_api=False)
 
             # Set options
-            solver.set_options(
+            opts = dict(
                 rtol=rtol,
                 atol=atol,
                 max_steps=max_steps,
                 lband=None,  # Use dense Jacobian
                 uband=None,
             )
+            if max_step_size > 0:
+                opts['max_step_size'] = max_step_size
+            solver.set_options(**opts)
 
             if self.verbose:
                 print(f"  Calling solver.solve()...")

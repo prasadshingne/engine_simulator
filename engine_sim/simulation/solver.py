@@ -18,12 +18,26 @@ try:
 except ImportError:
     HAS_CVODE = False
 
+# Try to import Cantera ReactorNet solver for large mechanisms
+try:
+    from .solver_cantera import (
+        CanteraEngineSolver, CanteraSolverParams,
+        CanteraMultizoneEngineSolver, CanteraMultizoneSolverParams,
+        check_cantera_solver_available
+    )
+    HAS_CANTERA_SOLVER = check_cantera_solver_available()
+except ImportError:
+    HAS_CANTERA_SOLVER = False
+
+# Threshold for switching to Cantera solver (species count)
+CANTERA_SOLVER_THRESHOLD = 100
+
 @dataclass
 class SolverParams:
     """Solver parameters."""
     method: str = "LSODA"     # Integration method
-    rtol: float = 1.0e-4      # Relative tolerance
-    atol: float = 1.0e-6      # Absolute tolerance
+    rtol: float = 1.0e-8      # Relative tolerance
+    atol: float = 1.0e-10     # Absolute tolerance
     max_step: float = 1.0e-3  # Maximum step size
     first_step: float = 1.0e-6  # First step size
     adiabatic: bool = False   # Whether to run in adiabatic mode
@@ -96,8 +110,9 @@ class EngineSolver:
         self.t_eval = None
         self.gamma = 1.35
         self.ca_start = None
+        self.theta_start = None
         self.rpm = None
-        
+
         # Store reference conditions
         self.p_ref = None
         self.T_ref = None
@@ -147,9 +162,10 @@ class EngineSolver:
                 raise ValueError(f"Pressure {P} Pa out of bounds [1e4, 1e8]")
         
         # Calculate crank angle and volume change
-        theta = (rpm * 2 * np.pi / 60) * t  # [rad]
-        dVdt = self.geom.volume_rate(theta, rpm)
-        
+        theta = (rpm * 2 * np.pi / 60) * t + self.theta_start  # [rad]
+        # volume_rate() returns bore_area * dx/dt = -dV/dt, negate to get actual dV/dt
+        dVdt = -self.geom.volume_rate(theta, rpm)
+
         # Update gas state and get properties
         self.chemistry.update_state(T, P, Y)
         props = self.chemistry.get_properties()
@@ -184,13 +200,12 @@ class EngineSolver:
         
         # Update progress bar if enabled
         if self.progress_bar is not None:
-            current_ca = self.ca_start + np.rad2deg(theta)  # Current crank angle
+            current_ca = np.rad2deg(theta)  # theta already includes theta_start
             progress = current_ca - self.ca_start  # Progress from start
             if progress > self.progress_bar.n:  # Only update if we've made progress
                 self.progress_bar.update(progress - self.progress_bar.n)
-                # Display shifted crank angle
-                self.progress_bar.set_postfix({'CA': f"{current_ca - 180:.1f}°"})
-        
+                self.progress_bar.set_postfix({'CA': f"{current_ca:.1f}°"})
+
         return dydt
         
     def _ode_system_multi(self, t: float, y: np.ndarray, rpm: float, T_wall: float) -> np.ndarray:
@@ -311,17 +326,18 @@ class EngineSolver:
         Ybulk = y[3 + nzones*(nsp+1):]  # Changed from y[4+...] to y[3+...]
 
         # Calculate crank angle and volume change
-        theta = (rpm * 2 * np.pi / 60) * t  # [rad]
-        dVdt = self.geom.volume_rate(theta, rpm)
+        theta = (rpm * 2 * np.pi / 60) * t + self.theta_start  # [rad]
+        # volume_rate() returns bore_area * dx/dt = -dV/dt, negate to get actual dV/dt
+        dVdt = -self.geom.volume_rate(theta, rpm)
 
         # Update progress bar if enabled
         if self.progress_bar is not None:
-            current_ca = self.ca_start + np.rad2deg(theta)
+            current_ca = np.rad2deg(theta)  # theta already includes theta_start
             progress = current_ca - self.ca_start
             if progress > self.progress_bar.n:
                 self.progress_bar.update(progress - self.progress_bar.n)
                 self.progress_bar.set_postfix({
-                    'CA': f"{current_ca - 180:.1f}°",
+                    'CA': f"{current_ca:.1f}°",
                     'Zones': nzones
                 })
 
@@ -604,13 +620,70 @@ class EngineSolver:
         Dict
             Solution dictionary with time, states, and crank angles
         """
+        # Check if we should use Cantera ReactorNet solver for large mechanisms
+        # Conditions: single-zone, large mechanism (>100 species), Cantera available
+        n_species = self.chemistry.gas.n_species
+        use_cantera_reactor = (
+            HAS_CANTERA_SOLVER and
+            self.params.model_type == "single" and
+            n_species >= CANTERA_SOLVER_THRESHOLD and
+            self.params.method in ["CVODE", "BDF", "Radau", "LSODA", "Cantera", "ReactorNet"]
+        )
+
+        if use_cantera_reactor:
+            print(f"\nUsing Cantera ReactorNet solver ({n_species} species)")
+            cantera_solver = CanteraEngineSolver(
+                geom=self.geom,
+                chemistry=self.chemistry,
+                heat_transfer=self.heat_transfer if not self.params.adiabatic else None,
+                params=CanteraSolverParams(
+                    rtol=self.params.rtol,
+                    atol=self.params.atol,
+                    adiabatic=self.params.adiabatic,
+                    verbose=self.params.show_progress
+                )
+            )
+            return cantera_solver.solve_closed_cycle(
+                rpm=rpm, T_wall=T_wall,
+                ca_start=ca_start, ca_end=ca_end,
+                y0=y0
+            )
+
+        # Check if we should use Cantera multizone solver
+        use_cantera_multizone = (
+            HAS_CANTERA_SOLVER and
+            self.params.model_type == "multi" and
+            n_species >= CANTERA_SOLVER_THRESHOLD
+        )
+
+        if use_cantera_multizone:
+            print(f"\nUsing Cantera Multizone ReactorNet solver ({n_species} species, {self.params.nzones} zones)")
+            cantera_mz_solver = CanteraMultizoneEngineSolver(
+                geom=self.geom,
+                chemistry=self.chemistry,
+                heat_transfer=self.heat_transfer if not self.params.adiabatic else None,
+                params=CanteraMultizoneSolverParams(
+                    rtol=self.params.rtol,
+                    atol=self.params.atol,
+                    adiabatic=self.params.adiabatic,
+                    verbose=self.params.show_progress,
+                    nzones=self.params.nzones
+                )
+            )
+            return cantera_mz_solver.solve_closed_cycle(
+                rpm=rpm, T_wall=T_wall,
+                ca_start=ca_start, ca_end=ca_end,
+                y0=y0
+            )
+
         # Store crank angle range for progress bar
         self.ca_start = ca_start
         self.rpm = rpm
-        
+
         # Convert crank angles to radians
         theta_start = np.deg2rad(ca_start)
         theta_end = np.deg2rad(ca_end)
+        self.theta_start = theta_start
 
         # Calculate time span
         omega = rpm * 2 * np.pi / 60  # [rad/s]
@@ -716,7 +789,8 @@ class EngineSolver:
                     atol=atol_adjusted,
                     max_steps=50000,
                     max_order=5,  # BDF order 1-5
-                    lmm_type='cvode'  # Use CVODE (BDF) for stiff systems
+                    lmm_type='cvode',  # Use CVODE (BDF) for stiff systems
+                    max_step_size=self.params.max_step
                 )
 
             else:
@@ -750,6 +824,7 @@ class EngineSolver:
             self.t_eval = None
             self.last_t = None
             self.ca_start = None
+            self.theta_start = None
             self.rpm = None
         
         # Handle both dict (CVODE) and object (scipy) solution formats
