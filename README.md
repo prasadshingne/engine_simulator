@@ -4,15 +4,15 @@ A zero-dimensional (0D) engine cycle simulator with detailed chemical kinetics a
 
 ## Features
 
-- **Single-zone and multi-zone HCCI models** (up to 50 zones)
-- **Two reaction mechanisms:** Nissan PRF (33 species) and LLNL Gasoline Surrogate (312 species)
-- **Cantera ReactorNet solver** for large mechanisms — N coupled `IdealGasMoleReactor` instances with GMRES + AdaptivePreconditioner (10 zones x 312 species in ~46 s)
+- Single-zone and multi-zone HCCI models (up to 50 zones)
+- Two reaction mechanisms: Nissan PRF (33 species) and LLNL Gasoline Surrogate (312 species), including the Mehl et al. gasoline surrogate chemistry [2]
+- Cantera ReactorNet solver for large mechanisms — N coupled `IdealGasMoleReactor` instances with GMRES + AdaptivePreconditioner (10 zones x 312 species in ~46 s)
 - Woschni heat transfer correlation
 - EGR handling with equilibrium composition
-- Temperature stratification modeling (multi-zone with wall heat transfer)
-- **Interactive Streamlit GUI** with Plotly plots
-- **Run comparison mode** — overlay up to 4 simulations with different configurations
-- **CVODE solver** (SUNDIALS) for robust handling of stiff chemistry
+- Temperature stratification modeling (multi-zone with wall heat transfer), based on an AMECS-style zonal approach [3]
+- Interactive Streamlit GUI with Plotly plots
+- Run comparison mode — overlay up to 4 simulations with different configurations
+- CVODE solver (SUNDIALS) for robust handling of stiff chemistry
 - Jupyter tutorial notebooks
 - pytest test suite (50 tests)
 
@@ -126,18 +126,77 @@ pytest -m "not cvode"
 
 The simulator solves conservation equations for a reacting variable-volume system:
 
-1. **Energy conservation** — temperature evolution from compression work, chemical heat release, and wall heat transfer
-2. **Species conservation** — mass fraction evolution from chemical kinetics
-3. **Pressure evolution** — derived from the ideal gas equation of state
-4. **Volume kinematics** — slider-crank mechanism
+1. Energy conservation — temperature evolution from compression work, chemical heat release, and wall heat transfer
+2. Species conservation — mass fraction evolution from chemical kinetics
+3. Pressure evolution — derived from the ideal gas equation of state
+4. Volume kinematics — slider-crank mechanism
 
-**Single-zone state vector:** `[T, V, P, m, Y₁...Yₙ]`
+Single-zone state vector: `[T, V, P, m, Y₁...Yₙ]`
 
-**Multi-zone state vector:** `[T_bulk, P, V, T₁, Y₁...Yₙ, ..., Tₖ, Y₁...Yₙ, Y_bulk]`
+Multi-zone state vector: `[T_bulk, P, V, T₁, Y₁...Yₙ, ..., Tₖ, Y₁...Yₙ, Y_bulk]`
+
+### Implementation Equations
+
+The equations below match the implemented right-hand side in `engine_sim/simulation/solver.py` and `engine_sim/engine/heat_transfer.py`.
+
+Crank-angle and volume kinematics:
+
+```text
+omega = 2*pi*rpm/60
+theta(t) = theta_start + omega*t
+dV/dt = -volume_rate(theta, rpm)
+```
+
+Wall heat transfer (simplified Woschni form in code):
+
+```text
+Up = 2*stroke*rpm/60
+h = C_scale*C * V^vol_exp * (P/1000)^press_exp * T^temp_exp * (Up + vel_offset)^vel_exp
+Q_wall = h*A_total*(T - T_wall)
+```
+
+Single-zone ODE system:
+
+```text
+dT/dt = (-P*(dV/dt) + Q_chem*V - Q_wall) / (m*cv)
+dP/dt = P*((dT/dt)/T - (dV/dt)/V)
+dY_k/dt = (W_k*omega_dot_k)/rho
+```
+
+Multi-zone ODE system:
+
+```text
+M_i = M_total*f_i
+V_i = M_i/rho_i
+Ydot_k,i = (W_k*omega_dot_k,i)/rho_i
+
+dT_bulk/dt =
+  ( -M_total*R_bulk*T_bulk/V * (dV/dt)
+    - Q_wall
+    - sum_i M_i*sum_k(Ydot_k,i*u_k,i) ) / (M_total*Cv_bulk)
+
+dP/dt = P*((dT_bulk/dt)/T_bulk - (dV/dt)/V)
+
+dT_i/dt =
+  ( dP/dt*V_i
+    - Q_wall*w_i
+    - M_i*sum_k(Ydot_k,i*h_k,i) ) / (M_i*Cp_i)
+
+dY_k,bulk/dt = (1/M_total)*sum_i(M_i*Ydot_k,i)
+```
+
+Zone mass and heat-loss weighting:
+
+```text
+For 10 zones (AMECS-style profile): w_i = (f_i*C_i) / sum_j(f_j*C_j)
+Fallback (other N):               w_i = i^2 / sum_{j=0..N-1}(j^2)
+```
+
+The LLNL gasoline runs use a 4-component surrogate blend (iso-octane, n-heptane, toluene, 2-pentene) with detailed kinetics from Mehl et al. [2], and the 10-zone thermal stratification profile follows Kodavasal et al. [3].
 
 ### Multi-Zone Model
 
-The cylinder is divided into concentric zones from the hot core to the wall-adjacent region. Each zone has its own temperature and composition but shares a common pressure. Wall-adjacent zones lose more heat, creating thermal stratification that affects combustion phasing.
+The cylinder is divided into concentric zones from the hot core to the wall-adjacent region. Each zone has its own temperature and composition but shares a common pressure. Wall-adjacent zones lose more heat, creating thermal stratification that affects combustion phasing. The stratification and zone heat-loss treatment follow the accelerated multi-zone (AMECS) methodology from Kodavasal et al. [3].
 
 ### Heat Transfer
 
@@ -145,8 +204,8 @@ Wall heat transfer uses the Woschni correlation with coefficients C₁ = 2.28 (c
 
 ### Numerical Solution
 
-- **Small mechanisms** (< 100 species): CVODE solver (SUNDIALS BDF method) when available, with scipy LSODA as fallback.
-- **Large mechanisms** (100+ species): Auto-dispatches to Cantera's ReactorNet solver, which uses CVODES with analytical Jacobians computed in C++. For multizone, N `IdealGasMoleReactor` instances are coupled via pressure-equilibration walls and driven by proportional piston velocity callbacks. GMRES with `AdaptivePreconditioner` avoids the O(N³) cost of dense linear solves.
+- Small mechanisms (< 100 species): CVODE solver (SUNDIALS BDF method) when available, with scipy LSODA as fallback.
+- Large mechanisms (100+ species): Auto-dispatches to Cantera's ReactorNet solver, which uses CVODES with analytical Jacobians computed in C++. For multizone, N `IdealGasMoleReactor` instances are coupled via pressure-equilibration walls and driven by proportional piston velocity callbacks. GMRES with `AdaptivePreconditioner` avoids the O(N³) cost of dense linear solves.
 
 ## Engine Specifications (Default)
 
@@ -189,3 +248,7 @@ Overlay up to 4 simulations with different configurations. Each run is distingui
 ## References
 
 [1] T. Tsurushima, "A new skeletal PRF kinetic model for HCCI combustion," *Proceedings of the Combustion Institute*, vol. 32, no. 2, pp. 2835-2841, 2009. [DOI: 10.1016/j.proci.2008.06.018](https://doi.org/10.1016/j.proci.2008.06.018)
+
+[2] M. Mehl, W. J. Pitz, C. K. Westbrook, and H. J. Curran, "Kinetic modeling of gasoline surrogate components and mixtures under engine conditions," *Proceedings of the Combustion Institute*, vol. 33, no. 1, pp. 193-200, 2011. [DOI: 10.1016/j.proci.2010.05.027](https://doi.org/10.1016/j.proci.2010.05.027)
+
+[3] J. Kodavasal, M. J. McNenly, A. Babajimopoulos, S. M. Aceves, D. N. Assanis, M. A. Havstad, and D. L. Flowers, "An accelerated multi-zone model for engine cycle simulation of homogeneous charge compression ignition combustion," *International Journal of Engine Research*, vol. 14, no. 5, pp. 416-433, 2013. [DOI: 10.1177/1468087413482480](https://doi.org/10.1177/1468087413482480)
