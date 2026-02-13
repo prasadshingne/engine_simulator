@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from ..engine.geometry import GeometryParams
 from ..engine.heat_transfer import HeatTransfer, WoschniParams
 from ..models.chemistry import Chemistry
+from .multizone_profiles import zone_heat_loss_multipliers, zone_mass_fractions
 
 
 @dataclass
@@ -266,12 +267,15 @@ class CanteraEngineSolver:
 class CanteraMultizoneSolverParams:
     """Parameters for Cantera multizone solver using N coupled IdealGasReactors."""
     rtol: float = 1.0e-6
-    atol: float = 1.0e-12
+    # 1e-12 can trigger CVODES tiny-step collapse (h -> 0) for large
+    # low-temperature gasoline mechanisms near ignition onset; 3e-12 is a
+    # more robust default with negligible impact on validated 475 K cases.
+    atol: float = 3.0e-12
     max_steps: int = 50000
     adiabatic: bool = False
     verbose: bool = True
-    nzones: int = 5
-    pressure_coupling_coeff: float = 1e-6  # expansion_rate_coeff for inter-zone walls
+    nzones: int = 10
+    pressure_coupling_coeff: float = 0.0  # 0 = auto; expansion_rate_coeff for all-to-all coupling walls
 
 
 class CanteraMultizoneEngineSolver:
@@ -279,11 +283,11 @@ class CanteraMultizoneEngineSolver:
     Multizone engine solver using N standard Cantera IdealGasReactors.
 
     Each zone is a separate IdealGasReactor with Cantera's analytical Jacobian.
-    Zones are connected by coupling walls (expansion_rate_coeff) for fast
-    pressure equilibration, matching the shared-pressure multizone model.
+    Zones are connected by coupling walls (expansion_rate_coeff) for pressure
+    equilibration, matching the shared-pressure multizone model.
 
-    Architecture (balloon analogy):
-    - N IdealGasReactors (N balloons inside the cylinder)
+    Architecture:
+    - N IdealGasReactors (one per zone)
     - N piston walls: proportional velocity v_i = (V_i/V_total) * v_piston
     - N-1 coupling walls: pressure equilibration between adjacent zones
     - Per-zone heat flux: Ai-weighted Woschni (zone's own T and P)
@@ -327,6 +331,7 @@ class CanteraMultizoneEngineSolver:
         nsp = self.chemistry.gas.n_species
         nzones = self.params.nzones
         geom = self.geom
+        mass_fracs = zone_mass_fractions(nzones)
 
         # Extract initial state
         P0 = y0[1]
@@ -354,23 +359,27 @@ class CanteraMultizoneEngineSolver:
             gas_i = ct.Solution(self.mechanism_file)
             gas_i.TPY = T_zones0[i], P0, Y_zones0[i]
             r_i = ReactorClass(gas_i)
-            r_i.volume = V0 / nzones
+            r_i.volume = V0 * mass_fracs[i]
             reactors.append(r_i)
 
-        M_total = sum(r.mass for r in reactors)
-        m_per_zone = M_total / nzones
+        zone_masses = np.array([r.mass for r in reactors], dtype=float)
+        M_total = float(np.sum(zone_masses))
+        zone_mass_fracs = zone_masses / M_total
+        heat_mult = zone_heat_loss_multipliers(nzones, zone_mass_fracs)
 
         # Environment reservoir
         env = ct.Reservoir(ct.Solution('air.yaml'))
 
-        # Surface area fractions (core=0, wall=max)
-        Ai = np.zeros(nzones)
-        for i in range(nzones):
-            if nzones > 1:
-                Ai[i] = 3 * (2 * (i - 1))**2 / (
-                    2 * nzones * (nzones - 1) * (2 * nzones - 1))
-            else:
-                Ai[i] = 1.0
+        # Fallback geometric heat weights (core=0, wall=max, sum=1.0)
+        # Quadratic distribution: Ai[i] = i^2 / sum(j^2, j=0..N-1)
+        # Zone 0 (core) has no wall contact, zone N-1 (wall) has maximum
+        base_heat_weights = np.zeros(nzones)
+        if nzones > 1:
+            denom = nzones * (nzones - 1) * (2 * nzones - 1) / 6  # sum of i^2
+            for i in range(nzones):
+                base_heat_weights[i] = i**2 / denom
+        else:
+            base_heat_weights[0] = 1.0
 
         # Piston velocity (total)
         def total_piston_velocity(t):
@@ -383,6 +392,33 @@ class CanteraMultizoneEngineSolver:
         else:
             hp = WoschniParams()
         Up = 2 * geom.stroke * rpm / 60
+        if heat_mult is not None:
+            fixed_zone_heat_weights = zone_mass_fracs * heat_mult
+        else:
+            fixed_zone_heat_weights = base_heat_weights.copy()
+        wsum = float(np.sum(fixed_zone_heat_weights))
+        if wsum <= 0.0:
+            fixed_zone_heat_weights = np.full(nzones, 1.0 / nzones)
+        else:
+            fixed_zone_heat_weights = fixed_zone_heat_weights / wsum
+
+        def _bulk_temperature():
+            temps = np.array([r.T for r in reactors], dtype=float)
+            return float(np.dot(zone_mass_fracs, temps))
+
+        def _overall_heat_loss_rate(t):
+            theta = omega * t + theta_start
+            V = geom.cylinder_volume(theta)
+            T_bulk = _bulk_temperature()
+            P_bulk = reactors[0].thermo.P
+            h = (hp.C_scale * hp.C *
+                 V**hp.vol_exp *
+                 (P_bulk / 1000)**hp.press_exp *
+                 T_bulk**hp.temp_exp *
+                 (Up + hp.vel_offset)**hp.vel_exp)
+            head_a, piston_a, liner_a = geom.surface_area(theta)
+            A_total = head_a + piston_a + liner_a
+            return h * A_total * (T_bulk - T_wall)
 
         # --- Create walls ---
         piston_walls = []
@@ -398,39 +434,54 @@ class CanteraMultizoneEngineSolver:
 
             w = ct.Wall(reactors[i], env, velocity=_make_piston_v(i), A=1.0)
 
-            # Zone-specific Woschni heat flux
-            if not self.params.adiabatic and Ai[i] > 0:
-                def _make_hf(idx, ai):
+            if not self.params.adiabatic:
+                def _make_hf(idx):
                     def hf(t):
-                        theta = omega * t + theta_start
-                        V = geom.cylinder_volume(theta)
-                        T_gas = reactors[idx].T
-                        P_gas = reactors[idx].thermo.P
-                        h = (hp.C_scale * hp.C *
-                             V**hp.vol_exp *
-                             (P_gas / 1000)**hp.press_exp *
-                             T_gas**hp.temp_exp *
-                             (Up + hp.vel_offset)**hp.vel_exp)
-                        head_a, piston_a, liner_a = geom.surface_area(theta)
-                        A_total = head_a + piston_a + liner_a
-                        return ai * h * A_total * (T_gas - T_wall)
+                        q_overall = _overall_heat_loss_rate(t)
+                        if q_overall <= 0.0:
+                            return 0.0
+                        return fixed_zone_heat_weights[idx] * q_overall
                     return hf
-                w.heat_flux = _make_hf(i, Ai[i])
+                w.heat_flux = _make_hf(i)
 
             piston_walls.append(w)
 
-        # Coupling walls between adjacent reactors (pressure equilibration)
+        # All-to-all coupling walls for pressure equilibration.
+        # Unlike chain topology (0↔1↔2↔...↔N-1) where pressure changes
+        # must propagate through N-1 hops, all-to-all connects EVERY pair
+        # of zones directly. This eliminates the propagation bottleneck
+        # that caused 18% pressure divergence at lower T_init.
+        #
+        # Coupling walls are state-coupled in the ODE system (appear in the
+        # Jacobian), so CVODES handles the stiffness properly.
         K = self.params.pressure_coupling_coeff
+        if K <= 0:
+            V_TDC = geom.cylinder_volume(0)
+            V_TDC_zone = V_TDC / nzones
+            gamma_est = 1.35
+            P_TDC_est = P0 * (V0 / V_TDC) ** gamma_est
+            # Target eigenvalue per zone: same as chain topology per-wall
+            # Each zone has (N-1) connections, so per-wall K = target / (N-1)
+            target_eigenvalue = 5e6
+            K_chain = target_eigenvalue * V_TDC_zone / (gamma_est * P_TDC_est)
+            K = K_chain / max(1, nzones - 1)
+        n_coupling_walls = nzones * (nzones - 1) // 2
         coupling_walls = []
-        for i in range(nzones - 1):
-            w = ct.Wall(reactors[i], reactors[i + 1], A=1.0)
-            w.expansion_rate_coeff = K
-            coupling_walls.append(w)
+        for i in range(nzones):
+            for j in range(i + 1, nzones):
+                w = ct.Wall(reactors[i], reactors[j], A=1.0)
+                w.expansion_rate_coeff = K
+                coupling_walls.append(w)
 
         # --- Create ReactorNet ---
         net = ct.ReactorNet(reactors)
         net.rtol = self.params.rtol
-        net.atol = self.params.atol
+        effective_atol = self.params.atol
+        if nsp >= 200 and effective_atol < 3.0e-12:
+            # Guard against CVODES step underflow in large, stiff low-T
+            # chemistry regimes (e.g., 312-species gasoline at 470 K).
+            effective_atol = 3.0e-12
+        net.atol = effective_atol
         net.max_steps = self.params.max_steps
 
         # Use GMRES + preconditioner for large systems (avoids dense O(N³) linear solve)
@@ -452,10 +503,15 @@ class CanteraMultizoneEngineSolver:
             print(f"  Reactor type: {'IdealGasMoleReactor' if use_mole_reactor else 'IdealGasReactor'}")
             print(f"  Internal state: {n_vars} variables (analytical Jacobian)")
             print(f"  Linear solver: {lsolver}")
-            print(f"  Coupling K = {K}")
+            print(f"  Tolerances: rtol={self.params.rtol:.1e}, atol={effective_atol:.1e}")
+            print(f"  Coupling: all-to-all ({n_coupling_walls} walls), K={K:.4e}")
             print(f"  CA: {ca_start:.1f}° to {ca_end:.1f}°")
             print(f"  M_total = {M_total*1000:.4f} g")
-            print(f"  Ai = {[f'{a:.4f}' for a in Ai]}")
+            print(f"  Zone mass fractions = {[f'{z:.3f}' for z in zone_mass_fracs]}")
+            if heat_mult is not None:
+                print(f"  Zone heat multipliers = {[f'{c:.3f}' for c in heat_mult]}")
+            else:
+                print(f"  Geometric heat weights = {[f'{a:.4f}' for a in base_heat_weights]}")
             if not self.params.adiabatic and self.heat_transfer:
                 print(f"  Heat transfer: Woschni C={hp.C}, C_scale={hp.C_scale}")
             print(f"  Integrating...", end="", flush=True)
@@ -470,7 +526,7 @@ class CanteraMultizoneEngineSolver:
 
         # Store initial state
         t_out[0] = 0.0
-        self._store_state(0, reactors, nzones, nsp, m_per_zone, M_total,
+        self._store_state(0, reactors, nzones, nsp, zone_masses, M_total,
                          y_out, q_wall_out, piston_walls)
 
         success = True
@@ -480,13 +536,16 @@ class CanteraMultizoneEngineSolver:
             for k in range(1, n_points):
                 net.advance(t_eval[k])
                 t_out[k] = net.time
-                self._store_state(k, reactors, nzones, nsp, m_per_zone,
+                self._store_state(k, reactors, nzones, nsp, zone_masses,
                                  M_total, y_out, q_wall_out, piston_walls)
 
                 if self.params.verbose and k % 100 == 0:
                     ca_now = ca_start + np.rad2deg(omega * t_eval[k])
                     T_pk = np.max(y_out[0, :k+1])
-                    print(f" CA={ca_now:.0f}°(T={T_pk:.0f})",
+                    # Pressure divergence diagnostic
+                    zone_Ps = [r.thermo.P for r in reactors]
+                    P_spread = (max(zone_Ps) - min(zone_Ps)) / np.mean(zone_Ps) * 100
+                    print(f" CA={ca_now:.0f}°(T={T_pk:.0f},dP={P_spread:.2f}%)",
                           end="", flush=True)
 
         except Exception as e:
@@ -521,7 +580,7 @@ class CanteraMultizoneEngineSolver:
             'message': message, 'nfev': 0, 'njev': 0
         }
 
-    def _store_state(self, idx, reactors, nzones, nsp, m_per_zone, M_total,
+    def _store_state(self, idx, reactors, nzones, nsp, zone_masses, M_total,
                     y_out, q_wall_out, piston_walls):
         """Extract multizone state from N reactors into output format.
 
@@ -537,8 +596,8 @@ class CanteraMultizoneEngineSolver:
             T_i = r.T
             Y_i = r.Y
             V_total += r.volume
-            T_bulk_sum += m_per_zone * T_i
-            Y_bulk += m_per_zone * Y_i
+            T_bulk_sum += zone_masses[i] * T_i
+            Y_bulk += zone_masses[i] * Y_i
 
             y_out[3 + i * (nsp + 1), idx] = T_i
             y_out[3 + i * (nsp + 1) + 1: 3 + (i + 1) * (nsp + 1), idx] = Y_i

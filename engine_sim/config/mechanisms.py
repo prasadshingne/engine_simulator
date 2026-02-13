@@ -9,9 +9,9 @@ MECHANISM_PRESETS = {
     },
     "LLNL Gasoline Surrogate (312 species)": {
         "file": "data/mechanisms/gasoline_surrogate_323.yaml",
-        "fuel": {"IC8H18": 0.56, "NC7H16": 0.17, "C6H5CH3": 0.27},
-        "fuel_label": "4-Component Surrogate (56% iso-octane, 17% n-heptane, 27% toluene)",
-        "major_species": ["IC8H18", "NC7H16", "C6H5CH3", "O2", "CO2", "H2O"],
+        "fuel": {"IC8H18": 0.5413, "NC7H16": 0.1488, "C6H5CH3": 0.2738, "C5H10-2": 0.0361},
+        "fuel_label": "4-Component Surrogate (54.13% iso-octane, 14.88% n-heptane, 27.38% toluene, 3.61% 2-pentene)",
+        "major_species": ["IC8H18", "NC7H16", "C6H5CH3", "C5H10-2", "O2", "CO2", "H2O"],
     },
 }
 

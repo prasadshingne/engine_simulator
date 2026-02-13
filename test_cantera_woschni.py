@@ -40,7 +40,7 @@ print(f"\nInitial: T={T0:.1f} K, P={P0/1e5:.2f} bar, V={V0*1e6:.2f} cm3, m={m0*1
 # --- LLNL Gasoline Surrogate setup (for Cantera solver) ---
 llnl_params = ChemistryParams(
     mechanism="data/mechanisms/gasoline_surrogate_323.yaml",
-    fuel={"IC8H18": 0.56, "NC7H16": 0.17, "C6H5CH3": 0.27},
+    fuel={"IC8H18": 0.5413, "NC7H16": 0.1488, "C6H5CH3": 0.2738, "C5H10-2": 0.0361},
     phi=0.4, egr=0.0
 )
 

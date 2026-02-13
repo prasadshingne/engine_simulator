@@ -6,7 +6,7 @@ import pandas as pd
 
 from engine_sim.simulation.engine import EngineConfig, EngineSimulation
 from engine_sim.simulation.results import SimulationResults
-from engine_sim.gui.plotting import plot_results_dashboard, plot_zone_temperatures
+from engine_sim.gui.plotting import plot_results_dashboard, plot_zone_temperatures, plot_heat_release
 from engine_sim.config.mechanisms import MECHANISM_PRESETS, DEFAULT_MECHANISM
 
 MAX_SAVED_RUNS = 4
@@ -245,6 +245,11 @@ def _display_results():
     # ── Main results dashboard (overlay all runs) ────────────────────
     fig = plot_results_dashboard(runs, major_species=all_major)
     st.plotly_chart(fig, use_container_width=True)
+
+    # ── Heat release rate and cumulative heat release ─────────────────
+    st.subheader("Heat Release")
+    fig_hr = plot_heat_release(runs)
+    st.plotly_chart(fig_hr, use_container_width=True)
 
     # ── Multizone zone temperatures (current run only) ───────────────
     if config.model_type == "multi":

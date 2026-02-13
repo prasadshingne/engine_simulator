@@ -26,7 +26,7 @@ ht = HeatTransfer(geom, WoschniParams(C_scale=15.0))
 
 llnl_params = ChemistryParams(
     mechanism="data/mechanisms/gasoline_surrogate_323.yaml",
-    fuel={"IC8H18": 0.56, "NC7H16": 0.17, "C6H5CH3": 0.27},
+    fuel={"IC8H18": 0.5413, "NC7H16": 0.1488, "C6H5CH3": 0.2738, "C5H10-2": 0.0361},
     phi=0.4, egr=0.0
 )
 
@@ -197,7 +197,7 @@ ax.grid(True, alpha=0.3)
 # --- Row 1, Col 1: Major species (single-zone) ---
 ax = axes[1, 1]
 species_names = chem1.gas.species_names
-major = ['IC8H18', 'NC7H16', 'C6H5CH3', 'O2', 'CO2', 'H2O', 'CO']
+major = ['IC8H18', 'NC7H16', 'C6H5CH3', 'C5H10-2', 'O2', 'CO2', 'H2O', 'CO']
 for name in major:
     if name in species_names:
         idx = species_names.index(name)

@@ -16,6 +16,7 @@ SPECIES_COLORS = {
     'C8H18': '#ff7f0e', 'IC8H18': '#ff7f0e',
     'NC7H16': '#8c564b', 'C7H16': '#8c564b',
     'C6H5CH3': '#e377c2',
+    'C5H10-2': '#bcbd22',
     'O2': '#2ca02c',
     'CO2': '#9467bd',
     'H2O': '#17becf',
@@ -154,6 +155,111 @@ def plot_results_dashboard(runs, major_species=None) -> go.Figure:
             showlegend=True,
         )
 
+    return fig
+
+
+def compute_heat_release(crank_angle, pressure, volume, gamma=1.30):
+    """Compute net heat release rate and cumulative heat release.
+
+    Uses first-law analysis:
+        dQ/dθ = (γ/(γ-1)) * P * dV/dθ + (1/(γ-1)) * V * dP/dθ
+
+    Parameters
+    ----------
+    crank_angle : array
+        Crank angle [deg]
+    pressure : array
+        Pressure [Pa]
+    volume : array
+        Volume [m³]
+    gamma : float
+        Ratio of specific heats (default 1.30)
+
+    Returns
+    -------
+    ca_mid : array
+        Crank angles at midpoints [deg]
+    dQdtheta : array
+        Net heat release rate [J/deg]
+    Q_cum : array
+        Cumulative heat release [J] (same length as ca_mid)
+    Q_norm : array
+        Normalized cumulative heat release [0-1]
+    """
+    dtheta = np.diff(crank_angle)  # [deg]
+    dV = np.diff(volume)
+    dP = np.diff(pressure)
+    P_mid = (pressure[:-1] + pressure[1:]) / 2
+    V_mid = (volume[:-1] + volume[1:]) / 2
+    ca_mid = (crank_angle[:-1] + crank_angle[1:]) / 2
+
+    g1 = gamma / (gamma - 1)
+    g2 = 1 / (gamma - 1)
+    dQdtheta = g1 * P_mid * dV / dtheta + g2 * V_mid * dP / dtheta
+
+    Q_cum = np.cumsum(dQdtheta * dtheta)
+    # Normalize: 0 at start of combustion, 1 at end
+    Q_min = np.min(Q_cum)
+    Q_max = np.max(Q_cum)
+    Q_range = Q_max - Q_min
+    Q_norm = (Q_cum - Q_min) / Q_range if Q_range > 0 else np.zeros_like(Q_cum)
+
+    return ca_mid, dQdtheta, Q_cum, Q_norm
+
+
+def plot_heat_release(runs) -> go.Figure:
+    """Plot heat release rate and normalized cumulative heat release.
+
+    Parameters
+    ----------
+    runs : list of (label, SimulationResults)
+    """
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=('Heat Release Rate', 'Normalized Cumulative Heat Release'),
+        horizontal_spacing=0.1,
+    )
+
+    single = len(runs) == 1
+
+    for run_idx, (label, results) in enumerate(runs):
+        dash = DASH_STYLES[run_idx % len(DASH_STYLES)]
+        ca_mid, dQdtheta, Q_cum, Q_norm = compute_heat_release(
+            results.crank_angle, results.pressure, results.volume,
+        )
+
+        fig.add_trace(
+            go.Scatter(
+                x=ca_mid, y=dQdtheta,
+                mode='lines', name=label if not single else 'HRR',
+                line=dict(width=2, dash=dash),
+                showlegend=True,
+                legendgroup=label,
+            ),
+            row=1, col=1,
+        )
+
+        fig.add_trace(
+            go.Scatter(
+                x=ca_mid, y=Q_norm,
+                mode='lines', name=label if not single else 'Cumulative',
+                line=dict(width=2, dash=dash),
+                showlegend=False,
+                legendgroup=label,
+            ),
+            row=1, col=2,
+        )
+
+    fig.update_xaxes(title_text='Crank Angle [deg]', row=1, col=1)
+    fig.update_yaxes(title_text='dQ/dθ [J/deg]', row=1, col=1)
+    fig.update_xaxes(title_text='Crank Angle [deg]', row=1, col=2)
+    fig.update_yaxes(title_text='Normalized Heat Release [-]', row=1, col=2)
+
+    fig.update_layout(
+        height=350, template='plotly_white',
+        margin=dict(t=40, b=20),
+        legend=dict(font=dict(size=10)),
+    )
     return fig
 
 

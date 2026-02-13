@@ -10,6 +10,7 @@ import cantera as ct
 from ..engine.geometry import GeometryParams
 from ..engine.heat_transfer import HeatTransfer
 from ..models.chemistry import Chemistry
+from .multizone_profiles import zone_heat_loss_multipliers, zone_mass_fractions
 
 # Try to import CVODE solver (SUNDIALS) for better handling of stiff systems
 try:
@@ -50,7 +51,7 @@ class SolverParams:
     max_rate_limit: float = 1000.0  # Maximum allowed fractional change in mass fraction per step
     show_progress: bool = True  # Whether to show progress bar
     model_type: str = "single"  # Model type (single or multi-zone)
-    nzones: int = 5  # Number of zones
+    nzones: int = 10  # Number of zones
 
     @classmethod
     def from_yaml(cls, config: Dict) -> 'SolverParams':
@@ -299,6 +300,8 @@ class EngineSolver:
         # Get number of species and zones
         nsp = self.chemistry.gas.n_species
         nzones = min(max(1, self.params.nzones), 20)  # Limit between 1 and 20 zones
+        zone_mass_fracs = zone_mass_fractions(nzones)
+        zone_heat_mult = zone_heat_loss_multipliers(nzones, zone_mass_fracs)
 
         # Extract zone temperatures and compositions (Matlab lines 80-82)
         tzone = np.zeros(nzones)
@@ -360,9 +363,6 @@ class EngineSolver:
         Cpi = np.zeros(nzones)
         Ri = np.zeros(nzones)
 
-        # Distribute mass equally across zones (Matlab line 77)
-        mass_per_zone = M / nzones
-
         # Get species-specific properties (constant across all zones)
         # Just need to set state once to get MW
         self.chemistry.gas.TPY = T, P, Ybulk
@@ -376,7 +376,7 @@ class EngineSolver:
 
         # Per-zone calculations (Matlab lines 79-122)
         for i in range(nzones):
-            Mi[i] = mass_per_zone
+            Mi[i] = M * zone_mass_fracs[i]
 
             try:
                 # Set zone state (Matlab line 85)
@@ -471,19 +471,34 @@ class EngineSolver:
         # Use IDEAL GAS LAW form (Matlab line 95), not composition-dependent form
         dPdt = P * ((dTdt / T) - (dVdt / V))
 
+        # Zone-wise heat loss weighting.
+        if self.params.adiabatic or abs(Q_wall) < 1e-16:
+            zone_heat_weights = np.zeros(nzones)
+        else:
+            if nzones > 1:
+                denom = nzones * (nzones - 1) * (2 * nzones - 1) / 6
+                geometric_w = np.array([(i**2) / denom for i in range(nzones)])
+            else:
+                geometric_w = np.array([1.0])
+
+            if zone_heat_mult is not None:
+                # Equation (7): q_i = C_i * (m_i/m_tot) * q_overall
+                zone_heat_weights = zone_mass_fracs * zone_heat_mult
+                wsum = float(np.sum(zone_heat_weights))
+                if wsum <= 0.0:
+                    zone_heat_weights = geometric_w
+                else:
+                    zone_heat_weights = zone_heat_weights / wsum
+            else:
+                zone_heat_weights = geometric_w
+
         # Zone temperature derivatives (Matlab lines 145-150)
         dTidt_array = np.zeros(nzones)
         for i in range(nzones):
-            # Surface area fraction for zone i (Matlab line 94)
-            if nzones > 1:
-                Ai = 3*(2*(i-1))**2 / (2*nzones*(nzones-1)*(2*nzones-1))
-            else:
-                Ai = 1.0
-
             # dTi/dt = 1/(mi*cpi)*(dP/dt*Vi - q*Ai - mi*Ygen'*hnsp)  (Matlab line 146)
             chem_term = Mi[i] * np.dot(Ygen[:,i], hnsp[:,i])
             dTidt_array[i] = (1.0 / (Mi[i] * Cpi[i])) * (
-                dPdt * Vi[i] - Q_wall * Ai - chem_term
+                dPdt * Vi[i] - Q_wall * zone_heat_weights[i] - chem_term
             )
 
             # Check for non-finite values
@@ -493,7 +508,7 @@ class EngineSolver:
                 print(f"\n=== Zone {i} dTidt NaN/Inf ===", flush=True)
                 print(f"CA={ca:.1f}°, dTidt[{i}]={dTidt_array[i]}", flush=True)
                 print(f"Mi={Mi[i]}, Cpi={Cpi[i]}, Vi={Vi[i]}", flush=True)
-                print(f"dPdt={dPdt}, Q_wall={Q_wall}, Ai={Ai}", flush=True)
+                print(f"dPdt={dPdt}, Q_wall={Q_wall}, w_i={zone_heat_weights[i]}", flush=True)
                 print(f"chem_term={chem_term}", flush=True)
                 print(f"max|Ygen|={np.max(np.abs(Ygen[:,i]))}, max|hnsp|={np.max(np.abs(hnsp[:,i]))}", flush=True)
                 raise ValueError(f"Non-finite zone temperature derivative")
@@ -632,13 +647,17 @@ class EngineSolver:
 
         if use_cantera_reactor:
             print(f"\nUsing Cantera ReactorNet solver ({n_species} species)")
+            # Cantera ReactorNet requires tight tolerances for accurate combustion
+            # (rtol=1e-4 gives ~10% pressure error with large mechanisms)
+            ct_rtol = min(self.params.rtol, 1e-6)
+            ct_atol = min(self.params.atol, 1e-12)
             cantera_solver = CanteraEngineSolver(
                 geom=self.geom,
                 chemistry=self.chemistry,
                 heat_transfer=self.heat_transfer if not self.params.adiabatic else None,
                 params=CanteraSolverParams(
-                    rtol=self.params.rtol,
-                    atol=self.params.atol,
+                    rtol=ct_rtol,
+                    atol=ct_atol,
                     adiabatic=self.params.adiabatic,
                     verbose=self.params.show_progress
                 )
@@ -658,13 +677,18 @@ class EngineSolver:
 
         if use_cantera_multizone:
             print(f"\nUsing Cantera Multizone ReactorNet solver ({n_species} species, {self.params.nzones} zones)")
+            # Multizone Cantera with GMRES+preconditioner requires tight rtol,
+            # but overly strict atol (1e-12) can trigger CVODES tiny-step
+            # collapse for large low-temperature gasoline mechanisms.
+            mz_rtol = min(self.params.rtol, 1e-6)
+            mz_atol = min(self.params.atol, 3e-12)
             cantera_mz_solver = CanteraMultizoneEngineSolver(
                 geom=self.geom,
                 chemistry=self.chemistry,
                 heat_transfer=self.heat_transfer if not self.params.adiabatic else None,
                 params=CanteraMultizoneSolverParams(
-                    rtol=self.params.rtol,
-                    atol=self.params.atol,
+                    rtol=mz_rtol,
+                    atol=mz_atol,
                     adiabatic=self.params.adiabatic,
                     verbose=self.params.show_progress,
                     nzones=self.params.nzones
