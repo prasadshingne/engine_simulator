@@ -185,18 +185,23 @@ dT_i/dt =
 dY_k,bulk/dt = (1/M_total)*sum_i(M_i*Ydot_k,i)
 ```
 
-Zone mass and heat-loss weighting:
+Zone mass and heat-loss weighting (Kodavasal et al. profiles):
 
 ```text
-For 10 zones (AMECS-style profile): w_i = (f_i*C_i) / sum_j(f_j*C_j)
-Fallback (other N):               w_i = i^2 / sum_{j=0..N-1}(j^2)
+f_i  — zone mass fraction (Fig. 2, Kodavasal 2013)
+C_i  — zone heat-loss multiplier (Fig. 3b, Kodavasal 2013)
+w_i  = (f_i * C_i) / sum_j(f_j * C_j)   [supported for 10, 20, 40 zones]
 ```
 
-The LLNL gasoline runs use a 4-component surrogate blend (iso-octane, n-heptane, toluene, 2-pentene) with detailed kinetics from Mehl et al. [2], and the 10-zone thermal stratification profile follows Kodavasal et al. [3].
+The LLNL gasoline runs use a 4-component surrogate blend (iso-octane / n-heptane / toluene / 2-pentene) with detailed kinetics from Mehl et al. [2]. Zone mass fractions and heat-loss multipliers for 10, 20, and 40 zones follow the published profiles from Kodavasal et al. [3].
 
 ### Multi-Zone Model
 
-The cylinder is divided into concentric zones from the hot core to the wall-adjacent region. Each zone has its own temperature and composition but shares a common pressure. Wall-adjacent zones lose more heat, creating thermal stratification that affects combustion phasing. The stratification and zone heat-loss treatment follow the accelerated multi-zone (AMECS) methodology from Kodavasal et al. [3].
+The cylinder is divided into zones, each with a fixed mass fraction, its own temperature and composition, a common shared pressure, and heat loss only to the cylinder wall (no inter-zone heat or mass transfer). Differential wall heat loss across zones produces thermal stratification that affects combustion phasing. Zone mass fractions and heat-loss multipliers are taken directly from the published profiles in Kodavasal et al. [3] for 10, 20, and 40 zones.
+
+The figure below compares 10-, 20-, and 40-zone simulations with the LLNL 312-species gasoline surrogate mechanism (φ = 0.50, non-adiabatic, 2000 RPM). Curves are nearly indistinguishable, confirming that the zone-count discretization is consistent across all three supported configurations.
+
+![Zone Count Comparison](docs/images/multizone_zone_count_comparison.png)
 
 ### Heat Transfer
 
