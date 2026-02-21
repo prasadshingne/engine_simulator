@@ -9,7 +9,7 @@ from engine_sim.models.chemistry import Chemistry, ChemistryParams
 geom = GeometryParams(bore=0.086, stroke=0.086, con_rod=0.143, comp_ratio=14.0)
 T_init, P_init = 450.0, 1.5e5
 rpm = 1200
-nzones = 5
+nzones = 10
 
 nissan_params = ChemistryParams(
     mechanism="data/mechanisms/Nissan_chem.yaml",

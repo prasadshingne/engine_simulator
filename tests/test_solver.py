@@ -19,11 +19,11 @@ def single_zone_config():
 
 @pytest.fixture
 def multizone_config():
-    """3-zone non-adiabatic config using CVODE."""
+    """10-zone non-adiabatic config using CVODE."""
     config = EngineConfig.from_yaml()
     config.adiabatic = False
     config.model_type = "multi"
-    config.nzones = 3
+    config.nzones = 10
     config.method = "CVODE"
     config.rtol = 1e-4
     config.atol = 1e-10
@@ -89,7 +89,7 @@ class TestMultiZoneSolver:
     """Tests for multi-zone solver with CVODE."""
 
     def test_multizone_completes(self, multizone_config):
-        """3-zone non-adiabatic simulation should complete with CVODE."""
+        """10-zone non-adiabatic simulation should complete with CVODE."""
         sim = EngineSimulation(multizone_config)
         results = sim.run()
         assert results is not None

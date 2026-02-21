@@ -10,7 +10,11 @@ import cantera as ct
 from ..engine.geometry import GeometryParams
 from ..engine.heat_transfer import HeatTransfer
 from ..models.chemistry import Chemistry
-from .multizone_profiles import zone_heat_loss_multipliers, zone_mass_fractions
+from .multizone_profiles import (
+    validate_multizone_count,
+    zone_heat_loss_multipliers,
+    zone_mass_fractions,
+)
 
 # Try to import CVODE solver (SUNDIALS) for better handling of stiff systems
 try:
@@ -51,7 +55,7 @@ class SolverParams:
     max_rate_limit: float = 1000.0  # Maximum allowed fractional change in mass fraction per step
     show_progress: bool = True  # Whether to show progress bar
     model_type: str = "single"  # Model type (single or multi-zone)
-    nzones: int = 10  # Number of zones
+    nzones: int = 10  # Number of zones (supported: 10, 20, 40)
 
     @classmethod
     def from_yaml(cls, config: Dict) -> 'SolverParams':
@@ -235,7 +239,7 @@ class EngineSolver:
 
             # Get dimensions
             nsp = self.chemistry.gas.n_species
-            nzones = min(max(1, self.params.nzones), 20)
+            nzones = validate_multizone_count(self.params.nzones)
 
             # Clip zone temperatures and mass fractions
             for i in range(nzones):
@@ -299,7 +303,7 @@ class EngineSolver:
 
         # Get number of species and zones
         nsp = self.chemistry.gas.n_species
-        nzones = min(max(1, self.params.nzones), 20)  # Limit between 1 and 20 zones
+        nzones = validate_multizone_count(self.params.nzones)
         zone_mass_fracs = zone_mass_fractions(nzones)
         zone_heat_mult = zone_heat_loss_multipliers(nzones, zone_mass_fracs)
 
@@ -579,7 +583,7 @@ class EngineSolver:
 
         # Get dimensions
         nsp = self.chemistry.gas.n_species
-        nzones = min(max(1, self.params.nzones), 20)
+        nzones = validate_multizone_count(self.params.nzones)
 
         # ===== Bulk variables (T, P, V) =====
         # All bulk variables couple to each other
@@ -635,6 +639,9 @@ class EngineSolver:
         Dict
             Solution dictionary with time, states, and crank angles
         """
+        if self.params.model_type == "multi":
+            self.params.nzones = validate_multizone_count(self.params.nzones)
+
         # Check if we should use Cantera ReactorNet solver for large mechanisms
         # Conditions: single-zone, large mechanism (>100 species), Cantera available
         n_species = self.chemistry.gas.n_species
@@ -647,8 +654,7 @@ class EngineSolver:
 
         if use_cantera_reactor:
             print(f"\nUsing Cantera ReactorNet solver ({n_species} species)")
-            # Cantera ReactorNet requires tight tolerances for accurate combustion
-            # (rtol=1e-4 gives ~10% pressure error with large mechanisms)
+            # Cantera CVODES requires tight tolerances; clamp GUI values (1e-4/1e-10)
             ct_rtol = min(self.params.rtol, 1e-6)
             ct_atol = min(self.params.atol, 1e-12)
             cantera_solver = CanteraEngineSolver(
@@ -677,11 +683,10 @@ class EngineSolver:
 
         if use_cantera_multizone:
             print(f"\nUsing Cantera Multizone ReactorNet solver ({n_species} species, {self.params.nzones} zones)")
-            # Multizone Cantera with GMRES+preconditioner requires tight rtol,
-            # but overly strict atol (1e-12) can trigger CVODES tiny-step
-            # collapse for large low-temperature gasoline mechanisms.
+            # Cantera CVODES requires tight tolerances; clamp GUI values (1e-4/1e-10).
+            # solver_cantera.py then applies the nsp-dependent atol guard (>= 3e-12).
             mz_rtol = min(self.params.rtol, 1e-6)
-            mz_atol = min(self.params.atol, 3e-12)
+            mz_atol = min(self.params.atol, 1e-12)
             cantera_mz_solver = CanteraMultizoneEngineSolver(
                 geom=self.geom,
                 chemistry=self.chemistry,
@@ -728,7 +733,7 @@ class EngineSolver:
             # For multizone, compute total mass from initial conditions (Matlab line 92: init.m=init.V*density(gas))
             # Extract bulk composition from state vector
             nsp = self.chemistry.gas.n_species
-            nzones = min(max(1, self.params.nzones), 20)
+            nzones = validate_multizone_count(self.params.nzones)
             Ybulk_init = y0[3 + nzones*(nsp+1):]
 
             # Set gas state and compute initial mass
@@ -737,7 +742,7 @@ class EngineSolver:
             self.M_total = self.V_ref * rho_init  # Constant mass for closed cycle
         
         # Create time evaluation points (increased for smoothness)
-        self.t_eval = np.linspace(t_span[0], t_span[1], 700)  # Increased from 100 to 700 points
+        self.t_eval = np.linspace(t_span[0], t_span[1], 1200)  # 0.3°/pt for smooth zoom
         
         # Initialize progress bar if requested
         if self.params.show_progress:
@@ -784,13 +789,7 @@ class EngineSolver:
             print(f"CVODE not available, falling back to LSODA")
             print(f"Note: Install scikits.odes for better performance: conda install -c conda-forge scikits.odes sundials")
 
-        if self.params.model_type == "multi":
-            # For large multizone systems, relax tolerances slightly
-            if self.params.nzones >= 5:
-                rtol_adjusted = max(self.params.rtol, 1.0e-4)  # Slightly looser
-                atol_adjusted = max(self.params.atol, 1.0e-10)  # Slightly looser
-                if not use_cvode:
-                    print(f"Adjusted tolerances for large system: rtol={rtol_adjusted:.1e}, atol={atol_adjusted:.1e}")
+        # Respect configured tolerances directly for both single- and multi-zone.
 
         try:
             if use_cvode and HAS_CVODE:

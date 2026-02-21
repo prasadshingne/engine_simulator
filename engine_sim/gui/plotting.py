@@ -7,6 +7,7 @@ from plotly.subplots import make_subplots
 from engine_sim.simulation.results import SimulationResults
 
 DASH_STYLES = ['solid', 'dash', 'dot', 'dashdot']
+CA_ZOOM_RANGE = [-10, 30]
 
 
 DEFAULT_MAJOR_SPECIES = ['C8H18', 'O2', 'CO2', 'H2O']
@@ -113,11 +114,11 @@ def plot_results_dashboard(runs, major_species=None) -> go.Figure:
 
     fig.update_xaxes(title_text='Volume [cm3]', row=1, col=1)
     fig.update_yaxes(title_text='Pressure [bar]', row=1, col=1)
-    fig.update_xaxes(title_text='Crank Angle [deg]', row=1, col=2)
+    fig.update_xaxes(title_text='Crank Angle [deg]', range=CA_ZOOM_RANGE, row=1, col=2)
     fig.update_yaxes(title_text='Temperature [K]', row=1, col=2)
-    fig.update_xaxes(title_text='Crank Angle [deg]', row=2, col=1)
+    fig.update_xaxes(title_text='Crank Angle [deg]', range=CA_ZOOM_RANGE, row=2, col=1)
     fig.update_yaxes(title_text='Pressure [bar]', row=2, col=1)
-    fig.update_xaxes(title_text='Crank Angle [deg]', row=2, col=2)
+    fig.update_xaxes(title_text='Crank Angle [deg]', range=CA_ZOOM_RANGE, row=2, col=2)
     fig.update_yaxes(title_text='Mass Fraction [-]', row=2, col=2)
 
     # Species legend -- always near the species subplot (bottom-right)
@@ -250,9 +251,9 @@ def plot_heat_release(runs) -> go.Figure:
             row=1, col=2,
         )
 
-    fig.update_xaxes(title_text='Crank Angle [deg]', row=1, col=1)
+    fig.update_xaxes(title_text='Crank Angle [deg]', range=CA_ZOOM_RANGE, row=1, col=1)
     fig.update_yaxes(title_text='dQ/dθ [J/deg]', row=1, col=1)
-    fig.update_xaxes(title_text='Crank Angle [deg]', row=1, col=2)
+    fig.update_xaxes(title_text='Crank Angle [deg]', range=CA_ZOOM_RANGE, row=1, col=2)
     fig.update_yaxes(title_text='Normalized Heat Release [-]', row=1, col=2)
 
     fig.update_layout(
@@ -290,7 +291,7 @@ def plot_zone_temperatures(crank_angle, zone_temps, nzones) -> go.Figure:
             row=1, col=1,
         )
 
-    fig.update_xaxes(title_text='Crank Angle [deg]', row=1, col=1)
+    fig.update_xaxes(title_text='Crank Angle [deg]', range=CA_ZOOM_RANGE, row=1, col=1)
     fig.update_yaxes(title_text='Temperature [K]', row=1, col=1)
 
     # Stratification (core - wall)
@@ -304,7 +305,7 @@ def plot_zone_temperatures(crank_angle, zone_temps, nzones) -> go.Figure:
         ),
         row=1, col=2,
     )
-    fig.update_xaxes(title_text='Crank Angle [deg]', row=1, col=2)
+    fig.update_xaxes(title_text='Crank Angle [deg]', range=CA_ZOOM_RANGE, row=1, col=2)
     fig.update_yaxes(title_text='dT (Core - Wall) [K]', row=1, col=2)
 
     fig.update_layout(

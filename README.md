@@ -4,7 +4,7 @@ A zero-dimensional (0D) engine cycle simulator with detailed chemical kinetics a
 
 ## Features
 
-- Single-zone and multi-zone HCCI models (up to 50 zones)
+- Single-zone and multi-zone HCCI models with AMECS presets (10/20/40 zones)
 - Two reaction mechanisms: Nissan PRF (33 species) and LLNL Gasoline Surrogate (312 species), including the Mehl et al. gasoline surrogate chemistry [2]
 - Cantera ReactorNet solver for large mechanisms — N coupled `IdealGasMoleReactor` instances with GMRES + AdaptivePreconditioner (10 zones x 312 species in ~46 s)
 - Woschni heat transfer correlation

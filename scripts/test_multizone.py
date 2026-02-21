@@ -18,7 +18,7 @@ def main():
     
     # Configure for multi-zone model
     config.model_type = "multi"
-    config.nzones = 3  # Start with 3 zones for testing
+    config.nzones = 10  # Supported presets: 10, 20, 40
     config.adiabatic = True  # Run in adiabatic mode
 
     # Use BDF solver - Python's equivalent of Matlab's ode15s

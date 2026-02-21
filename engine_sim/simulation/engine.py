@@ -11,6 +11,7 @@ from ..models.chemistry import Chemistry, ChemistryParams
 from ..config.paths import get_default_config, resolve_mechanism_path
 from .solver import EngineSolver, SolverParams
 from .results import SimulationResults
+from .multizone_profiles import validate_multizone_count
 
 @dataclass
 class EngineConfig:
@@ -47,7 +48,7 @@ class EngineConfig:
     first_step: float  # First step size
     adiabatic: bool    # Whether to run in adiabatic mode
     model_type: str    # Model type (single or multi)
-    nzones: int        # Number of zones for multi-zone model
+    nzones: int        # Number of zones for multi-zone model (10/20/40)
     
     # Output settings
     save_path: str     # Path to save results
@@ -122,6 +123,8 @@ class EngineSimulation:
             Simulation configuration
         """
         self.config = config
+        if self.config.model_type == "multi":
+            self.config.nzones = validate_multizone_count(self.config.nzones)
 
         # Auto-resolve mechanism path
         config.mechanism = resolve_mechanism_path(config.mechanism)
@@ -197,7 +200,7 @@ class EngineSimulation:
             # State vector structure (matching Matlab HCCI_sim_dec038.m lines 121-130):
             # [T, P, V, T_zone1, Y_zone1, ..., T_zoneN, Y_zoneN, Y_bulk]
             # Note: Mass M is NOT in state vector (constant for closed cycle)
-            nzones = min(max(1, self.config.nzones), 20)  # Limit between 1 and 20 zones
+            nzones = validate_multizone_count(self.config.nzones)
             nsp = len(Y0)
             y0 = np.zeros(3 + nzones*(nsp+1) + nsp)  # [T,P,V] + [T_i,Y_i for each zone] + [Y_bulk]
             y0[0] = self.config.temperature  # Bulk T

@@ -77,9 +77,9 @@ def main():
 
         nzones = 1
         if model_type == "Multi Zone HCCI":
-            nzones = st.slider("Number of Zones", 2, 50, 10)
-            if "Gasoline" in mech_name and nzones > 5:
-                st.caption(f"10 zones x 312 species ~ 46 s with Cantera solver")
+            nzones = st.selectbox("Number of Zones", options=[10, 20, 40], index=0)
+            if "Gasoline" in mech_name:
+                st.caption(f"{nzones} zones x 312 species — runtime grows with zone count")
 
         # --- Run button ---
         st.divider()
@@ -135,8 +135,6 @@ def _run_simulation(*, phi, egr, bore_mm, stroke_mm, con_rod_mm, comp_ratio,
 
     # Use CVODE (SUNDIALS) for all cases
     config.method = "CVODE"
-    config.rtol = 1e-4
-    config.atol = 1e-10
 
     progress_bar = st.progress(0, text="Initializing simulation...")
 

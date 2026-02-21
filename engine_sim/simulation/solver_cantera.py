@@ -19,7 +19,11 @@ from dataclasses import dataclass
 from ..engine.geometry import GeometryParams
 from ..engine.heat_transfer import HeatTransfer, WoschniParams
 from ..models.chemistry import Chemistry
-from .multizone_profiles import zone_heat_loss_multipliers, zone_mass_fractions
+from .multizone_profiles import (
+    validate_multizone_count,
+    zone_heat_loss_multipliers,
+    zone_mass_fractions,
+)
 
 
 @dataclass
@@ -190,7 +194,7 @@ class CanteraEngineSolver:
         net.max_steps = self.params.max_steps
 
         # Set up output arrays
-        n_points = 700  # Number of output points
+        n_points = 1200  # Number of output points (0.3°/pt for 360° cycle)
         t_eval = np.linspace(0, t_end, n_points)
 
         # State storage: [T, V, P, m, Y...]
@@ -274,8 +278,8 @@ class CanteraMultizoneSolverParams:
     max_steps: int = 50000
     adiabatic: bool = False
     verbose: bool = True
-    nzones: int = 10
-    pressure_coupling_coeff: float = 0.0  # 0 = auto; expansion_rate_coeff for all-to-all coupling walls
+    nzones: int = 10  # Supported: 10, 20, 40
+    pressure_coupling_coeff: float = 0.0  # 0 = auto; expansion_rate_coeff for chain coupling walls
 
 
 class CanteraMultizoneEngineSolver:
@@ -329,7 +333,7 @@ class CanteraMultizoneEngineSolver:
         Dict with 't', 'y', 'ca', 'q_wall', 'success', 'message', 'nfev', 'njev'
         """
         nsp = self.chemistry.gas.n_species
-        nzones = self.params.nzones
+        nzones = validate_multizone_count(self.params.nzones)
         geom = self.geom
         mass_fracs = zone_mass_fractions(nzones)
 
@@ -446,32 +450,24 @@ class CanteraMultizoneEngineSolver:
 
             piston_walls.append(w)
 
-        # All-to-all coupling walls for pressure equilibration.
-        # Unlike chain topology (0↔1↔2↔...↔N-1) where pressure changes
-        # must propagate through N-1 hops, all-to-all connects EVERY pair
-        # of zones directly. This eliminates the propagation bottleneck
-        # that caused 18% pressure divergence at lower T_init.
-        #
-        # Coupling walls are state-coupled in the ODE system (appear in the
-        # Jacobian), so CVODES handles the stiffness properly.
+        # Chain coupling walls for pressure equilibration: zone i ↔ zone i+1.
+        # Adjacent zones are coupled only, which limits Jacobian density and
+        # avoids the step-underflow stiffness that all-to-all topology produces
+        # for small zones (zone 0 = 2% mass with Kodavasal profiles).
+        gamma_est = 1.35
+        V_TDC = geom.cylinder_volume(0)
+        P_TDC_est = P0 * (V0 / V_TDC) ** gamma_est
         K = self.params.pressure_coupling_coeff
         if K <= 0:
-            V_TDC = geom.cylinder_volume(0)
-            V_TDC_zone = V_TDC / nzones
-            gamma_est = 1.35
-            P_TDC_est = P0 * (V0 / V_TDC) ** gamma_est
-            # Target eigenvalue per zone: same as chain topology per-wall
-            # Each zone has (N-1) connections, so per-wall K = target / (N-1)
+            V_TDC_zone_avg = V_TDC / nzones
             target_eigenvalue = 5e6
-            K_chain = target_eigenvalue * V_TDC_zone / (gamma_est * P_TDC_est)
-            K = K_chain / max(1, nzones - 1)
-        n_coupling_walls = nzones * (nzones - 1) // 2
+            K = target_eigenvalue * V_TDC_zone_avg / (gamma_est * P_TDC_est)
+        n_coupling_walls = nzones - 1
         coupling_walls = []
-        for i in range(nzones):
-            for j in range(i + 1, nzones):
-                w = ct.Wall(reactors[i], reactors[j], A=1.0)
-                w.expansion_rate_coeff = K
-                coupling_walls.append(w)
+        for i in range(nzones - 1):
+            w = ct.Wall(reactors[i], reactors[i + 1], A=1.0)
+            w.expansion_rate_coeff = K
+            coupling_walls.append(w)
 
         # --- Create ReactorNet ---
         net = ct.ReactorNet(reactors)
@@ -504,7 +500,7 @@ class CanteraMultizoneEngineSolver:
             print(f"  Internal state: {n_vars} variables (analytical Jacobian)")
             print(f"  Linear solver: {lsolver}")
             print(f"  Tolerances: rtol={self.params.rtol:.1e}, atol={effective_atol:.1e}")
-            print(f"  Coupling: all-to-all ({n_coupling_walls} walls), K={K:.4e}")
+            print(f"  Coupling: chain ({n_coupling_walls} walls), K={K:.4e}")
             print(f"  CA: {ca_start:.1f}° to {ca_end:.1f}°")
             print(f"  M_total = {M_total*1000:.4f} g")
             print(f"  Zone mass fractions = {[f'{z:.3f}' for z in zone_mass_fracs]}")
@@ -517,7 +513,7 @@ class CanteraMultizoneEngineSolver:
             print(f"  Integrating...", end="", flush=True)
 
         # Output arrays
-        n_points = 700
+        n_points = 1200
         t_eval = np.linspace(0, t_end, n_points)
         n_out = 3 + nzones * (nsp + 1) + nsp
         y_out = np.zeros((n_out, n_points))

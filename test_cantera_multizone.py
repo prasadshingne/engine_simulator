@@ -16,7 +16,7 @@ from engine_sim.simulation.solver import EngineSolver, SolverParams
 geom = GeometryParams(bore=0.086, stroke=0.086, con_rod=0.143, comp_ratio=14.0)
 T_init, P_init = 450.0, 1.5e5
 rpm, T_wall = 1200, 450.0
-nzones = 5
+nzones = 10
 ht = HeatTransfer(geom, WoschniParams(C_scale=15.0))
 
 nissan_params = ChemistryParams(
