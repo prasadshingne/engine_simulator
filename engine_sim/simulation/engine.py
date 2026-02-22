@@ -49,11 +49,14 @@ class EngineConfig:
     adiabatic: bool    # Whether to run in adiabatic mode
     model_type: str    # Model type (single or multi)
     nzones: int        # Number of zones for multi-zone model (10/20/40)
-    
+
     # Output settings
     save_path: str     # Path to save results
     plot_format: str   # Plot file format
     dpi: int          # Plot resolution
+
+    # Optional overrides (have defaults — must come after all non-default fields)
+    use_manual_solver: bool = False  # Use legacy scipy ODE solver instead of Cantera ReactorNet
     
     @classmethod
     def from_yaml(cls, config_path: str = None):
@@ -103,6 +106,7 @@ class EngineConfig:
             adiabatic=bool(config['solver']['adiabatic']),
             model_type=str(config['solver']['model_type']),
             nzones=int(config['solver']['nzones']),
+            use_manual_solver=bool(config['solver'].get('use_manual_solver', False)),
             
             # Output settings
             save_path=str(config['output']['save_path']),
@@ -166,7 +170,8 @@ class EngineSimulation:
                 first_step=config.first_step,
                 adiabatic=config.adiabatic,
                 model_type=config.model_type,
-                nzones=config.nzones
+                nzones=config.nzones,
+                use_manual_solver=config.use_manual_solver,
             )
         )
         

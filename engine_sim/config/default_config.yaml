@@ -33,6 +33,7 @@ solver:
   adiabatic: false       # whether to run in adiabatic mode (no heat transfer)
   model_type: "single"   # "single" or "multi" zone model
   nzones: 10            # number of zones for multi-zone model (10, 20, or 40)
+  use_manual_solver: false  # set to true to use legacy scipy ODE solver instead of Cantera ReactorNet
   
 output:
   save_path: "data/output/"  # Path relative to project root

@@ -56,6 +56,7 @@ class SolverParams:
     show_progress: bool = True  # Whether to show progress bar
     model_type: str = "single"  # Model type (single or multi-zone)
     nzones: int = 10  # Number of zones (supported: 10, 20, 40)
+    use_manual_solver: bool = False  # Use legacy scipy ODE solver instead of Cantera ReactorNet
 
     @classmethod
     def from_yaml(cls, config: Dict) -> 'SolverParams':
@@ -78,7 +79,8 @@ class SolverParams:
             max_rate_limit=1000.0,
             show_progress=True,
             model_type=solver_config['model_type'],
-            nzones=solver_config['nzones']
+            nzones=solver_config['nzones'],
+            use_manual_solver=bool(solver_config.get('use_manual_solver', False)),
         )
 
 class EngineSolver:
@@ -642,14 +644,12 @@ class EngineSolver:
         if self.params.model_type == "multi":
             self.params.nzones = validate_multizone_count(self.params.nzones)
 
-        # Check if we should use Cantera ReactorNet solver for large mechanisms
-        # Conditions: single-zone, large mechanism (>100 species), Cantera available
+        # Dispatch to Cantera ReactorNet solver unless the manual solver is explicitly requested
         n_species = self.chemistry.gas.n_species
         use_cantera_reactor = (
             HAS_CANTERA_SOLVER and
             self.params.model_type == "single" and
-            n_species >= CANTERA_SOLVER_THRESHOLD and
-            self.params.method in ["CVODE", "BDF", "Radau", "LSODA", "Cantera", "ReactorNet"]
+            not self.params.use_manual_solver
         )
 
         if use_cantera_reactor:
@@ -678,7 +678,7 @@ class EngineSolver:
         use_cantera_multizone = (
             HAS_CANTERA_SOLVER and
             self.params.model_type == "multi" and
-            n_species >= CANTERA_SOLVER_THRESHOLD
+            not self.params.use_manual_solver
         )
 
         if use_cantera_multizone:

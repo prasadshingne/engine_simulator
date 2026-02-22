@@ -16,11 +16,15 @@ def _make_run_label(config, mech_name: str = "") -> str:
     """Generate a short descriptive label from the config."""
     model = "SZ" if config.model_type == "single" else f"MZ-{config.nzones}"
     adi = "adi" if config.adiabatic else "non-adi"
-    # Short mechanism name: "PRF" or "GS"
     if "Gasoline" in mech_name:
         mech_short = "GS"
     else:
-        mech_short = "PRF"
+        # Derive octane number from fuel blend (C8H18 mole fraction × 100)
+        if isinstance(config.fuel, dict):
+            on = round(config.fuel.get("C8H18", 1.0) * 100)
+        else:
+            on = 100  # pure iso-octane string fallback
+        mech_short = f"PRF{on}"
     return f"{mech_short}, {model}, phi={config.phi:.2f}, {adi}"
 
 
@@ -47,7 +51,21 @@ def main():
         mech_names = list(MECHANISM_PRESETS.keys())
         mech_name = st.selectbox("Reaction Mechanism", mech_names, index=0)
         preset = MECHANISM_PRESETS[mech_name]
-        st.caption(preset["fuel_label"])
+
+        # PRF blend control — only shown for Nissan PRF mechanism
+        prf_octane = 85  # default; only used when Nissan is selected
+        if "Nissan" in mech_name:
+            prf_octane = st.slider(
+                "Octane Number (PRF)", min_value=0, max_value=100, value=85, step=1,
+                help="Mole fraction blend: iso-Octane % + n-Heptane % = 100%",
+            )
+            st.caption(
+                f"PRF{prf_octane}: {prf_octane}% iso-Octane (C8H18) / "
+                f"{100 - prf_octane}% n-Heptane (C7H16)"
+            )
+        else:
+            st.caption(preset["fuel_label"])
+
         if "Gasoline" in mech_name:
             st.info("312 species — auto-dispatches to Cantera ReactorNet solver with GMRES + preconditioner.")
 
@@ -100,7 +118,7 @@ def main():
             con_rod_mm=con_rod_mm, comp_ratio=comp_ratio,
             rpm=rpm, T_init=T_init, P_init_bar=P_init_bar, T_wall=T_wall,
             model_type=model_type, adiabatic=adiabatic, nzones=nzones,
-            mech_name=mech_name,
+            mech_name=mech_name, prf_octane=prf_octane,
         )
     elif 'results' in st.session_state:
         # Show cached results if available
@@ -111,14 +129,18 @@ def main():
 
 def _run_simulation(*, phi, egr, bore_mm, stroke_mm, con_rod_mm, comp_ratio,
                     rpm, T_init, P_init_bar, T_wall, model_type, adiabatic, nzones,
-                    mech_name):
+                    mech_name, prf_octane=85):
     """Build config, run simulation, cache and display results."""
     preset = MECHANISM_PRESETS[mech_name]
 
     # Build config
     config = EngineConfig.from_yaml()
     config.mechanism = preset["file"]
-    config.fuel = preset["fuel"]
+    if "Nissan" in mech_name:
+        frac = prf_octane / 100.0
+        config.fuel = {"C8H18": frac, "C7H16": 1.0 - frac}
+    else:
+        config.fuel = preset["fuel"]
     config.phi = phi
     config.egr = egr
     config.bore = bore_mm / 1000.0

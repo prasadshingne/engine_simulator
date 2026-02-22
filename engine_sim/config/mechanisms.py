@@ -3,9 +3,9 @@
 MECHANISM_PRESETS = {
     "Nissan PRF (33 species)": {
         "file": "data/mechanisms/Nissan_chem.yaml",
-        "fuel": "C8H18",
-        "fuel_label": "iso-Octane (C8H18)",
-        "major_species": ["C8H18", "O2", "CO2", "H2O"],
+        "fuel": {"C8H18": 0.85, "C7H16": 0.15},
+        "fuel_label": "PRF85 — 85% iso-Octane (C8H18) / 15% n-Heptane (C7H16)",
+        "major_species": ["C8H18", "C7H16", "O2", "CO2", "H2O"],
     },
     "LLNL Gasoline Surrogate (312 species)": {
         "file": "data/mechanisms/gasoline_surrogate_323.yaml",
