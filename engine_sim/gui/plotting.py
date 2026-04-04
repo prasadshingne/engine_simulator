@@ -225,9 +225,15 @@ def plot_heat_release(runs) -> go.Figure:
 
     for run_idx, (label, results) in enumerate(runs):
         dash = DASH_STYLES[run_idx % len(DASH_STYLES)]
-        ca_mid, dQdtheta, Q_cum, Q_norm = compute_heat_release(
-            results.crank_angle, results.pressure, results.volume,
-        )
+        if results.dQ_dca_prescribed is not None and results.mfb_profile is not None:
+            # Adiabatic-core model: use the prescribed heat-release profile directly.
+            ca_mid = results.ca_heat_release if results.ca_heat_release is not None else results.crank_angle
+            dQdtheta = results.dQ_dca_prescribed
+            Q_norm = results.mfb_profile
+        else:
+            ca_mid, dQdtheta, _, Q_norm = compute_heat_release(
+                results.crank_angle, results.pressure, results.volume,
+            )
 
         fig.add_trace(
             go.Scatter(

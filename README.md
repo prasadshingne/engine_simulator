@@ -5,6 +5,7 @@ A zero-dimensional (0D) engine cycle simulator with detailed chemical kinetics a
 ## Features
 
 - Single-zone and multi-zone HCCI models with AMECS presets (10/20/40 zones)
+- **Adiabatic Core (AC) phenomenological model** — fast single-zone model with Goldsborough ignition delay + Shingne three-step combustion, calibrated to the 10-zone LLNL MZ model
 - Two reaction mechanisms: Nissan PRF (33 species) and LLNL Gasoline Surrogate (312 species), including the Mehl et al. gasoline surrogate chemistry [2]
 - Cantera ReactorNet solver for large mechanisms — N coupled `IdealGasMoleReactor` instances with GMRES + AdaptivePreconditioner (10 zones x 312 species in ~46 s)
 - Woschni heat transfer correlation
@@ -242,6 +243,57 @@ Overlay up to 4 simulations with different configurations. Each run is distingui
 
 ![Comparison Mode](docs/images/comparison.png)
 
+### Adiabatic Core (AC) Phenomenological Model
+
+The AC model provides a fast (~ms) alternative to the full ODE-based solvers, based on Shingne et al. [4, 5]. It uses two steps in sequence:
+
+**1. Ignition timing (θ_IGN)**
+
+A direct polynomial regression predicts θ_IGN from operating conditions:
+
+```
+log(−θ_IGN) = f(RPM/2000, φ/0.5, RGF/0.4, P_TDC_bar/50)   [2nd-order, 15 terms]
+```
+
+Fitted to 114 valid points from a 120-point Latin Hypercube Sampling (LHS) sweep over:
+
+| Parameter | Range |
+|-----------|-------|
+| RPM | 800–4000 |
+| φ (equiv. ratio) | 0.20–0.80 |
+| RGF | 0.20–0.60 |
+| P_IVC | 1.0–2.5 bar |
+
+Each sweep point was run with the 10-zone MZ model using the LLNL 312-species gasoline surrogate. Fit quality: R²=0.80, RMS≈3.4 °CA.
+
+A Livengood-Wu/Goldsborough fallback path (with a 10-parameter δE_AC polynomial, R²=0.54) is retained and can be enabled by setting `use_direct_ign_fit: false` in `fitted_ac_params.yaml`.
+
+**2. Burn duration and MFB profile (Shingne et al. [5])**
+
+Crank-angle milestones (θ_25, θ_50, θ_75) are predicted from quadratic power-law correlations in (θ_IGN, φ', RPM, P_TDC):
+
+```
+Δθ_IGN→25 = |a1·θ² + a2·θ + a3| · φ_r^x1 · spd^x2 · P_r^x3
+```
+
+Equations 1–3 are refitted to the same MZ sweep (R²=0.97, 0.89, 0.95 respectively). The MFB profile is a three-stage model: exponential ITHR (0→25%), Wiebe (25→75%), and linear tail (75→100%).
+
+**3. Combustion efficiency**
+
+C_eff is predicted as a hyperbolic function of peak adiabatic temperature, with power-law corrections for φ', RPM, and P_TDC (R²=0.97).
+
+**Calibration workflow**
+
+```bash
+# 1. Generate the MZ training data (120 points, ~14 workers, ~30 min)
+python scripts/calibration/01_run_sweep.py
+
+# 2. Fit all correlations and save YAML
+python scripts/calibration/02_fit_params.py
+
+# Fitted parameters are auto-loaded from data/calibration/fitted_ac_params.yaml
+```
+
 ## Limitations
 
 - Closed cycle only (IVC to EVO)
@@ -257,3 +309,7 @@ Overlay up to 4 simulations with different configurations. Each run is distingui
 [2] M. Mehl, W. J. Pitz, C. K. Westbrook, and H. J. Curran, "Kinetic modeling of gasoline surrogate components and mixtures under engine conditions," *Proceedings of the Combustion Institute*, vol. 33, no. 1, pp. 193-200, 2011. [DOI: 10.1016/j.proci.2010.05.027](https://doi.org/10.1016/j.proci.2010.05.027)
 
 [3] J. Kodavasal, M. J. McNenly, A. Babajimopoulos, S. M. Aceves, D. N. Assanis, M. A. Havstad, and D. L. Flowers, "An accelerated multi-zone model for engine cycle simulation of homogeneous charge compression ignition combustion," *International Journal of Engine Research*, vol. 14, no. 5, pp. 416-433, 2013. [DOI: 10.1177/1468087413482480](https://doi.org/10.1177/1468087413482480)
+
+[4] P. S. Shingne, R. J. Middleton, D. N. Assanis, C. Borgnakke, and J. B. Martz, "A thermodynamic model for homogeneous charge compression ignition combustion with recompression valve events and direct injection: Part I—Adiabatic core ignition model," *International Journal of Engine Research*, vol. 18, no. 7, pp. 657–676, 2017. [DOI: 10.1177/1468087416664635](https://doi.org/10.1177/1468087416664635)
+
+[5] P. S. Shingne, J. Sterniak, D. N. Assanis, C. Borgnakke, and J. B. Martz, "Thermodynamic model for homogeneous charge compression ignition combustion with recompression valve events and direct injection: Part II—Combustion model and evaluation against transient experiments," *International Journal of Engine Research*, vol. 18, no. 7, pp. 677–700, 2017. [DOI: 10.1177/1468087416665052](https://doi.org/10.1177/1468087416665052)

@@ -129,6 +129,7 @@ class EngineSimulation:
         self.config = config
         if self.config.model_type == "multi":
             self.config.nzones = validate_multizone_count(self.config.nzones)
+        # "adiabatic_core" is a single-zone model — no multizone validation needed
 
         # Auto-resolve mechanism path
         config.mechanism = resolve_mechanism_path(config.mechanism)
@@ -192,8 +193,8 @@ class EngineSimulation:
         m0 = self.config.pressure * V0 / (
             props['cv'] * self.config.temperature * (props['gamma'] - 1.0))  # PV = mRT where R = cv*(gamma-1)
         
-        if self.config.model_type == "single":
-            # Single zone model
+        if self.config.model_type in ("single", "adiabatic_core"):
+            # Single zone model (adiabatic_core also uses the single-zone state vector)
             y0 = np.zeros(4 + len(Y0))
             y0[0] = self.config.temperature
             y0[1] = V0

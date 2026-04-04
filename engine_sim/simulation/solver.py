@@ -1,11 +1,17 @@
 """ODE solver for engine simulation."""
 
+import os
 import numpy as np
 from dataclasses import dataclass
 from typing import Dict, Tuple, Callable
 from scipy.integrate import solve_ivp
 from tqdm import tqdm
 import cantera as ct
+
+# Path to calibrated AC params (relative to this file → project root)
+_CALIBRATED_AC_YAML = os.path.join(
+    os.path.dirname(__file__), "..", "..", "data", "calibration", "fitted_ac_params.yaml"
+)
 
 from ..engine.geometry import GeometryParams
 from ..engine.heat_transfer import HeatTransfer
@@ -33,6 +39,15 @@ try:
     HAS_CANTERA_SOLVER = check_cantera_solver_available()
 except ImportError:
     HAS_CANTERA_SOLVER = False
+
+# Try to import the adiabatic core model
+try:
+    from .solver_adiabatic_core import (
+        AdiabaticCoreEngineSolver, AdiabaticCoreSolverConfig, AdiabaticCoreParams,
+    )
+    HAS_ADIABATIC_CORE = True
+except ImportError:
+    HAS_ADIABATIC_CORE = False
 
 # Threshold for switching to Cantera solver (species count)
 CANTERA_SOLVER_THRESHOLD = 100
@@ -643,6 +658,32 @@ class EngineSolver:
         """
         if self.params.model_type == "multi":
             self.params.nzones = validate_multizone_count(self.params.nzones)
+
+        # ── Adiabatic core model dispatch ──────────────────────────────────
+        if self.params.model_type == "adiabatic_core":
+            if not HAS_ADIABATIC_CORE:
+                raise ImportError("AdiabaticCoreEngineSolver not available")
+            print("\nUsing Adiabatic Core Ignition + Three-Step Combustion model")
+            ac_solver = AdiabaticCoreEngineSolver(
+                geom=self.geom,
+                chemistry=self.chemistry,
+                heat_transfer=self.heat_transfer if not self.params.adiabatic else None,
+                params=AdiabaticCoreSolverConfig(
+                    params=(
+                        AdiabaticCoreParams.from_yaml(_CALIBRATED_AC_YAML)
+                        if os.path.isfile(_CALIBRATED_AC_YAML)
+                        else AdiabaticCoreParams()
+                    ),
+                    rtol=self.params.rtol,
+                    atol=self.params.atol,
+                    verbose=self.params.show_progress,
+                ),
+            )
+            return ac_solver.solve_closed_cycle(
+                rpm=rpm, T_wall=T_wall,
+                ca_start=ca_start, ca_end=ca_end,
+                y0=y0,
+            )
 
         # Dispatch to Cantera ReactorNet solver unless the manual solver is explicitly requested
         n_species = self.chemistry.gas.n_species

@@ -2,7 +2,7 @@
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import matplotlib.pyplot as plt
 
 @dataclass
@@ -16,11 +16,15 @@ class SimulationResults:
     mass: np.ndarray           # Mass [kg]
     species: np.ndarray        # Species mass fractions [-]
     species_names: List[str]   # Species names
+    # Optional direct combustion diagnostics (used by adiabatic_core model)
+    ca_heat_release: Optional[np.ndarray] = None     # CA grid for dQ/dCA [deg]
+    dQ_dca_prescribed: Optional[np.ndarray] = None   # Prescribed dQ/dCA [J/deg]
+    mfb_profile: Optional[np.ndarray] = None         # Normalized cumulative MFB [0-1]
     
     @classmethod
     def from_solver_output(cls, output: Dict, species_names: List[str], model_type: str = "single", mechanism: str = None):
         """Create results from solver output."""
-        if model_type == "single":
+        if model_type in ("single", "adiabatic_core"):
             # Single zone model: [T, V, P, m, Y...]
             return cls(
                 time=output['t'],
@@ -30,7 +34,10 @@ class SimulationResults:
                 volume=output['y'][1],
                 mass=output['y'][3],
                 species=output['y'][4:],
-                species_names=species_names
+                species_names=species_names,
+                ca_heat_release=output.get('ca_heat_release'),
+                dQ_dca_prescribed=output.get('dQ_dca_prescribed'),
+                mfb_profile=output.get('mfb_profile'),
             )
         else:
             # Multi-zone model: [T, P, V, T_i, Y_i..., Y_bulk]

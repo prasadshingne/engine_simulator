@@ -14,7 +14,12 @@ MAX_SAVED_RUNS = 4
 
 def _make_run_label(config, mech_name: str = "") -> str:
     """Generate a short descriptive label from the config."""
-    model = "SZ" if config.model_type == "single" else f"MZ-{config.nzones}"
+    if config.model_type == "single":
+        model = "SZ"
+    elif config.model_type == "adiabatic_core":
+        model = "AC"
+    else:
+        model = f"MZ-{config.nzones}"
     adi = "adi" if config.adiabatic else "non-adi"
     if "Gasoline" in mech_name:
         mech_short = "GS"
@@ -85,12 +90,23 @@ def main():
         st.subheader("Operating Conditions")
         rpm = st.number_input("Engine Speed [RPM]", value=2000, min_value=500, max_value=7000, step=1)
         T_init = st.number_input("Initial Temperature [K]", value=475.0, min_value=300.0, max_value=700.0, step=5.0)
-        P_init_bar = st.number_input("Initial Pressure [bar]", value=1.013, min_value=0.5, max_value=5.0, step=0.1, format="%.3f")
+        P_init_bar = st.slider("Initial Pressure [bar]", min_value=0.5, max_value=3.0, value=1.013, step=0.05, format="%.2f")
+        P_init_bar = st.number_input("  ↳ or type exact value [bar]", min_value=0.5, max_value=3.0, value=float(P_init_bar), step=0.05, format="%.2f", label_visibility="visible")
         T_wall = st.number_input("Wall Temperature [K]", value=358.15, min_value=250.0, max_value=600.0, step=5.0)
+        ivc_ca = st.number_input("IVC [°CA]", value=-180, min_value=-180, max_value=-90, step=1)
+        evo_ca = st.number_input("EVO [°CA]", value=180, min_value=90, max_value=180, step=1)
 
         # --- Model ---
         st.subheader("Model")
-        model_type = st.radio("Model Type", ["Single Zone HCCI", "Multi Zone HCCI"])
+        model_type = st.radio(
+            "Model Type",
+            ["Single Zone HCCI", "Multi Zone HCCI", "Adiabatic Core HCCI"],
+        )
+        if model_type == "Adiabatic Core HCCI":
+            st.caption(
+                "Shingne (2016) adiabatic-core ignition (Livengood-Wu + Goldsborough) "
+                "with three-step MFB combustion model. Fast — no detailed chemistry."
+            )
         adiabatic = st.checkbox("Adiabatic (no heat transfer)", value=False)
 
         nzones = 1
@@ -117,6 +133,7 @@ def main():
             bore_mm=bore_mm, stroke_mm=stroke_mm,
             con_rod_mm=con_rod_mm, comp_ratio=comp_ratio,
             rpm=rpm, T_init=T_init, P_init_bar=P_init_bar, T_wall=T_wall,
+            ivc_ca=ivc_ca, evo_ca=evo_ca,
             model_type=model_type, adiabatic=adiabatic, nzones=nzones,
             mech_name=mech_name, prf_octane=prf_octane,
         )
@@ -128,8 +145,8 @@ def main():
 
 
 def _run_simulation(*, phi, egr, bore_mm, stroke_mm, con_rod_mm, comp_ratio,
-                    rpm, T_init, P_init_bar, T_wall, model_type, adiabatic, nzones,
-                    mech_name, prf_octane=85):
+                    rpm, T_init, P_init_bar, T_wall, ivc_ca, evo_ca,
+                    model_type, adiabatic, nzones, mech_name, prf_octane=85):
     """Build config, run simulation, cache and display results."""
     preset = MECHANISM_PRESETS[mech_name]
 
@@ -151,8 +168,15 @@ def _run_simulation(*, phi, egr, bore_mm, stroke_mm, con_rod_mm, comp_ratio,
     config.temperature = T_init
     config.pressure = P_init_bar * 1e5
     config.wall_temp = T_wall
+    config.start_ca = float(ivc_ca)
+    config.end_ca = float(evo_ca)
     config.adiabatic = adiabatic
-    config.model_type = "single" if model_type == "Single Zone HCCI" else "multi"
+    _MODEL_MAP = {
+        "Single Zone HCCI": "single",
+        "Multi Zone HCCI":  "multi",
+        "Adiabatic Core HCCI": "adiabatic_core",
+    }
+    config.model_type = _MODEL_MAP.get(model_type, "single")
     config.nzones = nzones
 
     # Use CVODE (SUNDIALS) for all cases
