@@ -1,6 +1,7 @@
 # Ignore mechanism files but keep folder structure
 data/mechanisms/*
 !data/mechanisms/.gitkeep
+!data/mechanisms/README.md
 
 # Ignore input files but keep folder structure
 data/input/*
