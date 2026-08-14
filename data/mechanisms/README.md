@@ -44,7 +44,7 @@ repository (supplementary materials of the paper above or direct from
 | `gasoline_surrogate_therm.dat.txt` | Thermodynamic data |
 | `gasoline_surrogate_transport.txt` | Transport properties |
 
-Convert to Cantera YAML using `ck2yaml` (requires Cantera 3.1+):
+Convert to Cantera YAML using `ck2yaml` (tested with Cantera 3.1.0):
 
 ```bash
 ck2yaml \
