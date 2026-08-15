@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+title: >-
+  engine_simulator: Zero- and Quasi-Dimensional HCCI Engine
+  Cycle Simulation in Python
+message: >-
+  If you use this software, please cite both the software
+  and the accompanying paper.
+type: software
+authors:
+  - family-names: Shingne
+    given-names: Prasad S.
+    orcid: "https://orcid.org/0000-0003-4885-6062"
+repository-code: "https://github.com/prasadshingne/engine_simulator"
+abstract: >-
+  An open-source Python package for zero-dimensional
+  single-zone and quasi-dimensional multi-zone Homogeneous
+  Charge Compression Ignition (HCCI) engine cycle
+  simulation. Couples Cantera chemical kinetics with a
+  temperature-stratified zone decomposition under a
+  pressure-relaxation coupling, the Woschni heat transfer
+  correlation, and an Adiabatic Core phenomenological model
+  for fast combustion phasing estimates. Includes a
+  Streamlit interface and tutorial notebooks.
+keywords:
+  - HCCI
+  - engine simulation
+  - combustion
+  - chemical kinetics
+  - multi-zone model
+  - thermal stratification
+  - Cantera
+  - Python
+license: MIT
+version: 1.0.0
+date-released: "2026-08-14"
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Shingne
+      given-names: Prasad S.
+      orcid: "https://orcid.org/0000-0003-4885-6062"
+  title: >-
+    Modernizing a Zero- and Quasi-Dimensional HCCI Engine
+    Simulator: LLM-Assisted Migration from Legacy MATLAB to
+    Python with Combustion Insights from Detailed Kinetics
+  journal: arXiv preprint
+  year: 2026
+  notes: "arXiv:XXXX.XXXXX"
