@@ -302,6 +302,25 @@ python scripts/calibration/02_fit_params.py
 - No inter-zone mass transfer
 - No crevice or blow-by losses
 
+## How to Cite
+
+If you use this simulator in your work, please cite the paper:
+
+```bibtex
+@article{shingne2026enginesim,
+  author  = {Shingne, Prasad S.},
+  title   = {Modernizing a Zero- and Quasi-Dimensional {HCCI} Engine Simulator:
+             {LLM}-Assisted Migration from Legacy {MATLAB} to {Python} with
+             Combustion Insights from Detailed Kinetics},
+  journal = {arXiv preprint arXiv:XXXX.XXXXX},
+  year    = {2026}
+}
+```
+
+To cite the exact software version, use the Zenodo record: [doi:10.5281/zenodo.21943879](https://doi.org/10.5281/zenodo.21943879).
+
+GitHub's "Cite this repository" link in the right sidebar gives both citations, generated from `CITATION.cff`.
+
 ## References
 
 [1] T. Tsurushima, "A new skeletal PRF kinetic model for HCCI combustion," *Proceedings of the Combustion Institute*, vol. 32, no. 2, pp. 2835-2841, 2009. [DOI: 10.1016/j.proci.2008.06.018](https://doi.org/10.1016/j.proci.2008.06.018)

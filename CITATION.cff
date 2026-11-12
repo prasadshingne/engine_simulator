@@ -10,7 +10,9 @@ authors:
   - family-names: Shingne
     given-names: Prasad S.
     orcid: "https://orcid.org/0000-0003-4885-6062"
+doi: 10.5281/zenodo.21943879
 repository-code: "https://github.com/prasadshingne/engine_simulator"
+url: "https://huggingface.co/spaces/prasadshingne/engine-simulator"
 abstract: >-
   An open-source Python package for zero-dimensional
   single-zone and quasi-dimensional multi-zone Homogeneous
@@ -30,6 +32,8 @@ keywords:
   - thermal stratification
   - Cantera
   - Python
+  - large language models
+  - code migration
 license: MIT
 version: 1.0.0
 date-released: "2026-08-14"
