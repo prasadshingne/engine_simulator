@@ -38,7 +38,7 @@ license: MIT
 version: 1.0.0
 date-released: "2026-08-14"
 preferred-citation:
-  type: article
+  type: generic
   authors:
     - family-names: Shingne
       given-names: Prasad S.
@@ -47,6 +47,9 @@ preferred-citation:
     Modernizing a Zero- and Quasi-Dimensional HCCI Engine
     Simulator: LLM-Assisted Migration from Legacy MATLAB to
     Python with Combustion Insights from Detailed Kinetics
-  journal: arXiv preprint
+  publisher:
+    name: Zenodo
   year: 2026
-  notes: "arXiv:XXXX.XXXXX"
+  doi: 10.5281/zenodo.24205162
+  url: "https://doi.org/10.5281/zenodo.24205162"
+  notes: Preprint
