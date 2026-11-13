@@ -307,15 +307,20 @@ python scripts/calibration/02_fit_params.py
 If you use this simulator in your work, please cite the paper:
 
 ```bibtex
-@article{shingne2026enginesim,
-  author  = {Shingne, Prasad S.},
-  title   = {Modernizing a Zero- and Quasi-Dimensional {HCCI} Engine Simulator:
-             {LLM}-Assisted Migration from Legacy {MATLAB} to {Python} with
-             Combustion Insights from Detailed Kinetics},
-  journal = {arXiv preprint arXiv:XXXX.XXXXX},
-  year    = {2026}
+@misc{shingne2026enginesim,
+  author    = {Shingne, Prasad S.},
+  title     = {Modernizing a Zero- and Quasi-Dimensional {HCCI} Engine Simulator:
+               {LLM}-Assisted Migration from Legacy {MATLAB} to {Python} with
+               Combustion Insights from Detailed Kinetics},
+  year      = {2026},
+  publisher = {Zenodo},
+  note      = {Preprint},
+  doi       = {10.5281/zenodo.24205162},
+  url       = {https://doi.org/10.5281/zenodo.24205162}
 }
 ```
+
+Paper (preprint): [doi:10.5281/zenodo.24205162](https://doi.org/10.5281/zenodo.24205162)
 
 To cite the exact software version, use the Zenodo record: [doi:10.5281/zenodo.21943879](https://doi.org/10.5281/zenodo.21943879).
 
