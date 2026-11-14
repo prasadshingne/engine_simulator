@@ -1,6 +1,10 @@
 # Engine Simulator
 
-A zero-dimensional (0D) engine cycle simulator with detailed chemical kinetics and an interactive GUI. Built as a learning tool for understanding HCCI combustion, heat transfer, and multi-zone modeling.
+[![tests](https://github.com/prasadshingne/engine_simulator/actions/workflows/tests.yml/badge.svg)](https://github.com/prasadshingne/engine_simulator/actions/workflows/tests.yml)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21943879.svg)](https://doi.org/10.5281/zenodo.21943879)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+A zero-dimensional (0D) single-zone and quasi-dimensional (QD) multi-zone engine cycle simulator for HCCI combustion, with detailed chemical kinetics and an interactive GUI. It is built for studying HCCI combustion, wall heat transfer, and thermal stratification. A live version runs at [huggingface.co/spaces/prasadshingne/engine-simulator](https://huggingface.co/spaces/prasadshingne/engine-simulator).
 
 ## Features
 
@@ -20,22 +24,36 @@ A zero-dimensional (0D) engine cycle simulator with detailed chemical kinetics a
 ## Installation
 
 ```bash
-# Clone and install as editable package
-git clone <repo-url>
-cd 0D_engine_simulator
+# Clone and install as editable package (installs Cantera from PyPI)
+git clone https://github.com/prasadshingne/engine_simulator.git
+cd engine_simulator
 pip install -e .
 
-# Install CVODE solver (recommended)
-conda install -c conda-forge scikits.odes sundials
+# Download the reaction mechanisms into data/mechanisms/
+python scripts/fetch_mechanisms.py
 
 # Install GUI dependencies
 pip install -e ".[gui]"
 
 # Install development dependencies (tests, notebooks)
 pip install -e ".[dev]"
+
+# Optional: CVODE solver (SUNDIALS) for the manual multi-zone solver
+conda install -c conda-forge scikits.odes sundials
 ```
 
-Requires Python 3.9+ and Cantera 2.6+.
+Requires Python 3.9+ and Cantera 3.1+. Tested with Cantera 3.1.0.
+
+The mechanism YAML files are not stored in this repository. `scripts/fetch_mechanisms.py` downloads the converted copies used by the live deployment; to build them from the original published sources instead, see [`data/mechanisms/README.md`](data/mechanisms/README.md).
+
+### Running the tests
+
+```bash
+python scripts/fetch_mechanisms.py --nissan   # the tests need the 33-species mechanism
+pytest
+```
+
+The four tests marked `cvode` are skipped unless `scikits.odes` is installed. The test suite runs on every push and pull request through GitHub Actions.
 
 ## Quick Start
 
@@ -73,6 +91,8 @@ notebooks/03_multizone_and_heat_transfer.ipynb  # Multi-zone model and Woschni c
 │   ├── gui/               # Streamlit app and Plotly plotting
 │   └── visualization/     # (reserved)
 ├── scripts/               # Standalone runnable scripts
+│   ├── calibration/       # Adiabatic Core model fitting workflow
+│   └── dev/               # Exploratory development scripts (not the test suite)
 ├── notebooks/             # Jupyter tutorial notebooks
 ├── tests/                 # pytest test suite
 ├── data/
@@ -301,6 +321,14 @@ python scripts/calibration/02_fit_params.py
 - No turbulence modeling
 - No inter-zone mass transfer
 - No crevice or blow-by losses
+
+## Contributing and Support
+
+Bug reports, questions and feature requests are welcome as [GitHub issues](https://github.com/prasadshingne/engine_simulator/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up a development environment, run the tests and submit changes, and for what level of support to expect.
+
+## License
+
+MIT. See [LICENSE](LICENSE). The reaction mechanisms are the work of their original authors; see [`data/mechanisms/README.md`](data/mechanisms/README.md) for sources.
 
 ## How to Cite
 

@@ -2,7 +2,7 @@
 """
 Test 10-zone non-adiabatic multizone model using CVODE (SUNDIALS).
 
-Run with: conda activate py39_sundials && python scripts/test_cvode_multizone.py
+Run with: conda activate py39_sundials && python scripts/dev/test_cvode_multizone.py
 """
 
 import sys
