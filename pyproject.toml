@@ -4,11 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "engine-sim"
-version = "0.1.0"
-description = "0D HCCI engine cycle simulator with detailed chemical kinetics"
+version = "1.0.0"
+description = "Zero- and quasi-dimensional HCCI engine cycle simulator with detailed chemical kinetics"
 readme = "README.md"
 requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Prasad S. Shingne"}]
 dependencies = [
+    "cantera>=3.1",
     "numpy",
     "scipy",
     "matplotlib",

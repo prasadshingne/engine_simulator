@@ -1,14 +1,23 @@
 # Reaction Mechanisms
 
 This directory contains Cantera YAML mechanism files used by the engine simulator.
-The files are not committed to the repository due to size and licensing — generate
-them locally using the instructions below.
+The files are not committed to the repository due to size and licensing.
+
+**Quickest route:** from the repository root, run
+
+```bash
+python scripts/fetch_mechanisms.py
+```
+
+This downloads the converted YAML files used by the live Hugging Face Space and
+checks that each one loads with the expected species and reaction counts. To build
+them yourself from the original published sources, follow the instructions below.
 
 ---
 
 ## Nissan PRF (33 species) — `Nissan_chem.yaml`
 
-**Source:** Tsurushima, A. "A new skeletal PRF kinetic model for HCCI combustion."
+**Source:** Tsurushima, T. "A new skeletal PRF kinetic model for HCCI combustion."
 *Proceedings of the Combustion Institute* 32 (2009) 2835–2841.
 
 The mechanism ships as a Cantera CTML/XML file (`nissan_chem.xml`). Convert it to
