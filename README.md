@@ -10,7 +10,7 @@ A zero-dimensional (0D) single-zone and quasi-dimensional (QD) multi-zone engine
 
 - Single-zone and multi-zone HCCI models with AMECS presets (10/20/40 zones)
 - **Adiabatic Core (AC) phenomenological model** — fast single-zone model with Goldsborough ignition delay + Shingne three-step combustion, calibrated to the 10-zone LLNL MZ model
-- Two reaction mechanisms: Nissan PRF (33 species) and LLNL Gasoline Surrogate (312 species), including the Mehl et al. gasoline surrogate chemistry [2]
+- Two reaction mechanisms: the Nissan PRF skeletal mechanism of Tsurushima [1] (33 species) and the LLNL gasoline surrogate of Mehl et al. [2] (312 species)
 - Cantera ReactorNet solver for large mechanisms — N coupled `IdealGasMoleReactor` instances with GMRES + AdaptivePreconditioner (10 zones x 312 species in ~46 s)
 - Woschni heat transfer correlation
 - EGR handling with equilibrium composition
